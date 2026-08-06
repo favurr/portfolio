@@ -1,0 +1,239 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String    @id
+  name          String
+  email         String
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+  projects      Project[]
+
+  @@unique([email])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+model Project {
+  id             String           @id @default(uuid())
+  title          String
+  slug           String           @unique
+  description    String           @default("")
+  featuredImage  String           @default("")
+  published      Boolean          @default(false)
+  featured       Boolean          @default(false)
+  order          Int              @default(0)
+  repository     String?
+  liveDemo       String?
+  year           Int?
+  client         String?
+  duration       String?
+  projectType    String[]         // Chosen type tags (UI, UX, web dev, etc)
+  category       String?          // General category
+  device         String?          // e.g. Mobile, Web, Desktop
+  industry       String?          // e.g. Fintech, Healthcare
+  role           String?          // Role e.g. Lead Frontend
+  overview       String?          // Long-form custom markdown overview
+  status         String           @default("draft") // live, draft, in progress, archived
+  seoTitle       String?
+  seoDescription String?
+  seoImage       String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  userId         String
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sections       ProjectSection[]
+  media          Media[]
+
+  @@index([userId])
+  @@map("project")
+}
+
+model ProjectSection {
+  id           String   @id @default(uuid())
+  projectId    String
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  componentKey String
+  order        Int      @default(0)
+  title        String?
+  subtitle     String?
+  content      String?
+  props        Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([projectId])
+  @@map("project_section")
+}
+
+model Media {
+  id          String   @id @default(uuid())
+  url         String
+  key         String
+  width       Int?
+  height      Int?
+  alt         String?
+  fileSize    Int?
+  mimeType    String?
+  projectId   String?
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([projectId])
+  @@map("media")
+}
+
+model Setting {
+  id           String   @id @default("global")
+  siteTitle    String
+  description  String
+  contactEmail String?
+  socialLinks  Json?
+  seoDefaults  Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("setting")
+}
+
+model Experience {
+  id          String   @id @default(uuid())
+  title       String
+  company     String
+  description String?
+  startDate   String
+  endDate     String?
+  order       Int      @default(0)
+  visible     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("experience")
+}
+
+model ContactSubmission {
+  id        String   @id @default(uuid())
+  name      String
+  email     String
+  subject   String?
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@map("contact_submission")
+}
+
+model BlogPost {
+  id          String    @id @default(uuid())
+  title       String
+  slug        String    @unique
+  excerpt     String?
+  content     String    @default("")
+  coverImage  String?
+  tags        String[]
+  status      String    @default("draft")
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("blog_post")
+}
+
+model ChatSession {
+  id        String        @id @default(uuid())
+  name      String?
+  email     String?
+  messages  ChatMessage[]
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@map("chat_session")
+}
+
+model ChatMessage {
+  id        String      @id @default(uuid())
+  sessionId String
+  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role      String
+  content   String
+  createdAt DateTime    @default(now())
+
+  @@index([sessionId])
+  @@map("chat_message")
+}
+
+model KnowledgeEntry {
+  id        String   @id @default(uuid())
+  title     String
+  content   String
+  category  String   @default("general")
+  enabled   Boolean  @default(true)
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("knowledge_entry")
+}
