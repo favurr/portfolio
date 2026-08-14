@@ -56,7 +56,7 @@ export default async function Home() {
             {/* Main Headline */}
             <h1 className="hero-text font-serif text-5xl sm:text-7xl lg:text-8xl font-normal tracking-tight text-foreground leading-[1.1]">
               Building high-performance <br className="hidden sm:block" />{" "}
-              digital <span className="italic font-normal">architectures</span>
+              digital <span className="italic font-normal">architectures.</span>
             </h1>
 
             {/* Subtitle */}
