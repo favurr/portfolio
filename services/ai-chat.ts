@@ -168,7 +168,6 @@ CRITICAL CAPABILITIES:
       model: activeModel.model,
       system: systemPrompt,
       messages,
-      maxSteps: 1, // Single-step fast completion
     });
 
     console.log(`[AI-CHAT] Resolving response textStream...`);

@@ -1446,29 +1446,28 @@ export default function StudioProjectsPage() {
                    </div>
                  )}
                </div>
-             </div>
-
-             {/* Dynamic Metadata Attributes */}
-             <div className="grid grid-cols-2 md:grid-cols-4 gap-8 py-8 border-y border-border/40 mb-20 font-mono text-xs">
-               <div>
-                 <span className="text-muted-foreground uppercase tracking-widest block mb-2">Client</span>
-                 <span className="text-foreground">{localProjectState.client || "Self-Initiated"}</span>
-               </div>
-               <div>
-                 <span className="text-muted-foreground uppercase tracking-widest block mb-2">Year</span>
-                 <span className="text-foreground">{localProjectState.year || "2026"}</span>
-               </div>
-               <div>
-                 <span className="text-muted-foreground uppercase tracking-widest block mb-2">Services</span>
-                 <span className="text-foreground">{(localProjectState.services || []).join(", ") || "Design & Development"}</span>
-               </div>
-               {localProjectState.projectType && localProjectState.projectType.length > 0 && (
-                 <div>
-                   <span className="text-muted-foreground uppercase tracking-widest block mb-2">Type</span>
-                   <span className="text-foreground">{localProjectState.projectType.join(", ")}</span>
-                 </div>
-               )}
-             </div>
+              {/* Dynamic Metadata Attributes */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-8 py-8 border-y border-border/40 mb-20 font-mono text-xs">
+                <div>
+                  <span className="text-muted-foreground uppercase tracking-widest block mb-2">Client</span>
+                  <span className="text-foreground">{localProjectState.client || "Self-Initiated"}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground uppercase tracking-widest block mb-2">Role</span>
+                  <span className="text-foreground">{localProjectState.role || "Design Engineer"}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground uppercase tracking-widest block mb-2">Timeline</span>
+                  <span className="text-foreground">{localProjectState.duration || "Ongoing"}</span>
+                </div>
+                {localProjectState.projectType && localProjectState.projectType.length > 0 && (
+                  <div>
+                    <span className="text-muted-foreground uppercase tracking-widest block mb-2">Focus</span>
+                    <span className="text-foreground">{localProjectState.projectType.join(", ")}</span>
+                  </div>
+                )}
+              </div>
+            </div>
 
              {/* Client Overview Block */}
              {localProjectState.overview && (

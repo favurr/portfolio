@@ -35,7 +35,7 @@ export async function POST(req: Request) {
 
     const tokenRequestData = await ably.auth.createTokenRequest({
       clientId: sessionId,
-      capability: capabilities,
+      capability: capabilities as any,
     });
 
     return NextResponse.json(tokenRequestData);
