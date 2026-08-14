@@ -2,12 +2,19 @@ import prisma from "@/lib/prisma";
 
 export const chatDal = {
   async createSession(data?: { name?: string; email?: string }) {
-    return prisma.chatSession.create({ data: data || {} });
+    return prisma.chatSession.create({ data: { ...(data || {}), isAiActive: true } });
   },
-  async addMessage(sessionId: string, role: string, content: string) {
+  async addMessage(sessionId: string, role: string, content: string, senderType?: string) {
     // Also touch session updatedAt
     await prisma.chatSession.update({ where: { id: sessionId }, data: { updatedAt: new Date() } });
-    return prisma.chatMessage.create({ data: { sessionId, role, content } });
+    return prisma.chatMessage.create({
+      data: {
+        sessionId,
+        role,
+        senderType: senderType || (role === "user" ? "visitor" : "assistant"),
+        content,
+      },
+    });
   },
   async getSession(id: string) {
     return prisma.chatSession.findUnique({

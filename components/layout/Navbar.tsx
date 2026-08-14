@@ -16,6 +16,7 @@ interface NavbarProps {
 
 const NAV_LINKS = [
   { href: "/projects", label: "Projects" },
+  { href: "/blog", label: "Blog" },
   { href: "/about", label: "About" },
   { href: "/contact", label: "Contact" },
 ];
@@ -23,8 +24,33 @@ const NAV_LINKS = [
 export function Navbar({ session }: NavbarProps) {
   const [timeString, setTimeString] = useState("");
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [showNavbar, setShowNavbar] = useState(true);
+  const [isAtTop, setIsAtTop] = useState(true);
+  const lastScrollYRef = useRef(0);
   const mobileMenuRef = useRef<HTMLDivElement>(null);
   const linkRefs = useRef<(HTMLAnchorElement | null)[]>([]);
+
+  // Hide on scroll down, show on scroll up
+  useEffect(() => {
+    const handleScroll = () => {
+      const currentScrollY = window.scrollY;
+      
+      // Determine if at the very top of the viewport
+      setIsAtTop(currentScrollY < 20);
+
+      // Determine scroll direction
+      if (currentScrollY > lastScrollYRef.current && currentScrollY > 80) {
+        setShowNavbar(false);
+      } else {
+        setShowNavbar(true);
+      }
+
+      lastScrollYRef.current = currentScrollY;
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
 
   // Live clock
   useEffect(() => {
@@ -34,7 +60,7 @@ export function Navbar({ session }: NavbarProps) {
           hour: "2-digit",
           minute: "2-digit",
           second: "2-digit",
-          hour12: true,
+          hour12: false,
         }),
       );
     };
@@ -92,7 +118,15 @@ export function Navbar({ session }: NavbarProps) {
 
   return (
     <>
-      <header className="site-header sticky top-0 z-50 w-full border-b border-border/40 bg-background/80 backdrop-blur-md transition-colors duration-350">
+      <header
+        className={`site-header fixed top-0 left-0 z-50 w-full transition-all duration-300 ease-in-out ${
+          showNavbar ? "translate-y-0" : "-translate-y-full"
+        } ${
+          isAtTop
+            ? "bg-transparent border-transparent"
+            : "bg-background/80 backdrop-blur-md border-b border-border/40"
+        }`}
+      >
       <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-6 sm:px-8 lg:px-12 relative">
           {/* Logo */}
           <TransitionLink
@@ -104,20 +138,20 @@ export function Navbar({ session }: NavbarProps) {
             <span className="text-muted-foreground/30 px-0.5 hidden lg:block">
               |
             </span>
-            <span className="text-muted-foreground tracking-wide font-sans text-xs font-medium hidden lg:block">
+            <span className="text-foreground tracking-wide font-sans text-xs font-medium hidden lg:block">
               Design Engineer
             </span>
           </TransitionLink>
 
           {/* Center: Live Time & Location */}
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden sm:flex items-center gap-2 font-mono text-xs text-muted-foreground">
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden sm:flex items-center gap-2 font-mono text-xs text-foreground">
             <span>{timeString}</span>
             <span className="text-border">•</span>
-            <span className="uppercase tracking-wider">Lagos, NG</span>
+            <span className="uppercase tracking-wider">WAT</span>
           </div>
 
           {/* Desktop Right */}
-          <div className="hidden lg:flex items-center gap-4 text-xs font-medium text-muted-foreground">
+          <div className="hidden lg:flex items-center gap-4 text-xs font-medium text-foreground">
             <nav className="flex items-center gap-5">
               {NAV_LINKS.map((link) => (
                 <TransitionLink
@@ -139,29 +173,6 @@ export function Navbar({ session }: NavbarProps) {
             </nav>
 
             <Separator orientation="vertical" className="h-4 bg-border" />
-
-            <div className="flex items-center gap-3">
-              <a
-                href="https://github.com/Favourokereke"
-                target="_blank"
-                rel="noreferrer"
-                className="hover:text-foreground transition-colors"
-                aria-label="GitHub"
-              >
-                <FaGithub className="w-4 h-4" />
-              </a>
-              <a
-                href="https://linkedin.com"
-                target="_blank"
-                rel="noreferrer"
-                className="hover:text-foreground transition-colors"
-                aria-label="LinkedIn"
-              >
-                <FaLinkedinIn className="w-4 h-4" />
-              </a>
-            </div>
-
-            <Separator orientation="vertical" className="h-4 bg-border" />
             <ModeToggle />
           </div>
 
@@ -170,7 +181,7 @@ export function Navbar({ session }: NavbarProps) {
             <ModeToggle />
             <button
               onClick={() => setMobileOpen((prev) => !prev)}
-              className="text-muted-foreground hover:text-foreground transition-colors p-1"
+              className="text-foreground hover:text-foreground transition-colors p-1"
               aria-label={mobileOpen ? "Close menu" : "Open menu"}
             >
               {mobileOpen ? (

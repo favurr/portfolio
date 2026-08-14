@@ -513,3 +513,10 @@ A feature is complete when it:
 * does not introduce unnecessary complexity
 
 If any of these are missing, the feature is not finished.
+
+
+# How to work with me
+
+A guide for contributors and future AI agents.
+
+* use bunx instead of npx

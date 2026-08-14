@@ -205,4 +205,42 @@ export const projectDal = {
       where: { id: sectionId },
     });
   },
+
+  // Single-transaction batch save: project meta + N sections in ONE round-trip
+  async batchSaveProject(
+    projectId: string,
+    projectData: Partial<{
+      title: string; slug: string; description: string; featuredImage: string;
+      published: boolean; featured: boolean; order: number; repository: string;
+      liveDemo: string; year: number; client: string; duration: string;
+      projectType: string[]; category: string; device: string; industry: string;
+      role: string; overview: string; status: string;
+      seoTitle: string; seoDescription: string; seoImage: string;
+    }>,
+    sections: Array<{
+      id: string;
+      title?: string | null;
+      subtitle?: string | null;
+      content?: string | null;
+      props?: any;
+    }>
+  ) {
+    return prisma.$transaction([
+      prisma.project.update({
+        where: { id: projectId },
+        data: projectData,
+      }),
+      ...sections.map((s) =>
+        prisma.projectSection.update({
+          where: { id: s.id },
+          data: {
+            title: s.title,
+            subtitle: s.subtitle,
+            content: s.content,
+            props: s.props,
+          },
+        })
+      ),
+    ]);
+  },
 };

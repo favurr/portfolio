@@ -1,24 +1,24 @@
 interface RichTextProps {
   content?: string | null;
   props?: {
-    align?: "left" | "center" | "right";
-    columns?: number;
+    bgStyle?: "transparent" | "card";
+    animation?: "none" | "fade" | "slide" | "scale";
   };
 }
 
 export default function RichTextSection({ content, props }: RichTextProps) {
-  const alignClass =
-    props?.align === "center"
-      ? "text-center mx-auto"
-      : props?.align === "right"
-      ? "text-right ml-auto"
-      : "text-left";
+  const bgStyle = props?.bgStyle || "transparent";
+
+  const bgStyleClass =
+    bgStyle === "card"
+      ? "p-8 md:p-10 bg-muted/10 border border-border/40 rounded-2xl shadow-sm"
+      : "transparent";
 
   return (
-    <div className={`font-sans max-w-3xl leading-relaxed text-muted-foreground text-base sm:text-lg ${alignClass}`}>
+    <div className={`font-sans max-w-4xl leading-relaxed text-muted-foreground text-base sm:text-lg text-left ${bgStyleClass}`}>
       {content ? (
         <div 
-          className="space-y-4 prose prose-invert max-w-none prose-p:leading-relaxed prose-headings:font-serif prose-headings:font-normal prose-headings:text-foreground prose-a:text-foreground prose-a:underline"
+          className="space-y-4 prose prose-invert max-w-none prose-p:leading-relaxed prose-headings:font-serif prose-headings:font-normal prose-headings:text-foreground prose-a:text-foreground prose-a:underline break-inside-avoid"
           dangerouslySetInnerHTML={{ __html: content }} 
         />
       ) : (

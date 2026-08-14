@@ -36,8 +36,10 @@ export function ProjectDetailAnimations({ children }: { children: React.ReactNod
       // 3. Dynamic Section reveals
       const sections = gsap.utils.toArray(".project-section-reveal");
       sections.forEach((section: any) => {
-        gsap.from(section, {
-          y: 40,
+        const animType = section.getAttribute("data-animation") || "slide";
+        if (animType === "none") return; // Skip animation if set to none
+
+        let startProps: any = {
           opacity: 0,
           duration: 0.9,
           ease: "power3.out",
@@ -46,7 +48,18 @@ export function ProjectDetailAnimations({ children }: { children: React.ReactNod
             start: "top 85%",
             toggleActions: "play none none reverse",
           },
-        });
+        };
+
+        if (animType === "slide") {
+          startProps.y = 40;
+        } else if (animType === "scale") {
+          startProps.scale = 0.96;
+          startProps.y = 20;
+        } else if (animType === "fade") {
+          // Just opacity fade
+        }
+
+        gsap.from(section, startProps);
       });
     }, containerRef);
 

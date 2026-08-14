@@ -30,18 +30,25 @@ export function ProjectList({ projects }: ProjectListProps) {
   const [activeImage, setActiveImage] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const floatingRef = useRef<HTMLDivElement>(null);
+  const [hasHover, setHasHover] = useState(false);
+  const [prefersReduced, setPrefersReduced] = useState(false);
 
   useEffect(() => {
+    const hoverMatch = window.matchMedia("(hover: hover) and (pointer: fine)");
+    const motionMatch = window.matchMedia("(prefers-reduced-motion: reduce)");
+    setHasHover(hoverMatch.matches);
+    setPrefersReduced(motionMatch.matches);
+
     const el = floatingRef.current;
-    if (!el) return;
+    if (!el || motionMatch.matches) return;
 
     // Mirror the cursor dot exactly: xPercent/yPercent center it, x/y track the mouse.
     // Position off-screen initially so first hover has no visible travel.
     gsap.set(el, { xPercent: -50, yPercent: -50, x: -9999, y: -9999, opacity: 0, scale: 0.9 });
 
     // quickTo: the only thing that drives position — never call gsap.set(x/y) after this
-    const xTo = gsap.quickTo(el, "x", { duration: 0.5, ease: "power3.out" });
-    const yTo = gsap.quickTo(el, "y", { duration: 0.5, ease: "power3.out" });
+    const xTo = gsap.quickTo(el, "x", { duration: 0.3, ease: "power3.out" });
+    const yTo = gsap.quickTo(el, "y", { duration: 0.3, ease: "power3.out" });
 
     const onMouseMove = (e: MouseEvent) => {
       xTo(e.clientX);
@@ -54,7 +61,7 @@ export function ProjectList({ projects }: ProjectListProps) {
 
   const handleMouseEnter = (id: string, img?: string | null) => {
     setHoveredId(id);
-    if (!img) return;
+    if (!img || prefersReduced) return;
     setActiveImage(img);
 
     // Only animate opacity + scale — x/y are driven purely by quickTo above
@@ -68,6 +75,7 @@ export function ProjectList({ projects }: ProjectListProps) {
 
   const handleMouseLeave = () => {
     setHoveredId(null);
+    if (prefersReduced) return;
     gsap.to(floatingRef.current, {
       opacity: 0,
       scale: 0.9,
@@ -81,20 +89,33 @@ export function ProjectList({ projects }: ProjectListProps) {
   return (
     <>
       {/* Floating cursor image — mirrors the cursor dot technique exactly */}
-      <div
-        ref={floatingRef}
-        className="pointer-events-none fixed top-0 left-0 z-50 overflow-hidden shadow-2xl"
-        style={{ width: "420px", height: "260px" }}
-      >
-        {activeImage && (
-          <Image
-            src={activeImage}
-            alt="Project Preview"
-            fill
-            className="object-cover"
-          />
-        )}
-      </div>
+      {!prefersReduced && (
+        <div
+          ref={floatingRef}
+          className="hidden md:block pointer-events-none fixed top-0 left-0 z-50 overflow-hidden shadow-2xl rounded-xl border border-border/40"
+          style={{ width: "420px", height: "260px" }}
+        >
+          {activeImage && (
+            activeImage.endsWith(".mp4") ? (
+              <video
+                src={activeImage}
+                autoPlay
+                muted
+                loop
+                playsInline
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <Image
+                src={activeImage}
+                alt="Project Preview"
+                fill
+                className="object-cover"
+              />
+            )
+          )}
+        </div>
+      )}
 
       <div className="flex flex-col divide-y divide-border/40">
         {projects.map((project) => {
@@ -106,12 +127,12 @@ export function ProjectList({ projects }: ProjectListProps) {
             <Link
               key={project.id}
               href={`/projects/${project.slug}`}
-              onMouseEnter={() => handleMouseEnter(project.id, project.featuredImage)}
-              onMouseLeave={handleMouseLeave}
+              onMouseEnter={() => hasHover && handleMouseEnter(project.id, project.featuredImage)}
+              onMouseLeave={() => hasHover && handleMouseLeave()}
               className="group/item relative block py-8"
               style={{
-                opacity: isDimmed ? 0.3 : 1,
-                transition: "opacity 300ms ease",
+                opacity: (isDimmed && !prefersReduced) ? 0.3 : 1,
+                transition: "opacity 300ms cubic-bezier(0.23, 1, 0.32, 1)",
               }}
             >
               <div className="flex flex-col md:flex-row md:items-baseline justify-between gap-4">
@@ -122,6 +143,29 @@ export function ProjectList({ projects }: ProjectListProps) {
                   <p className="font-sans text-sm sm:text-base text-muted-foreground line-clamp-1 leading-relaxed">
                     {project.description}
                   </p>
+                  {/* Inline visual preview for mobile/touch users */}
+                  {project.featuredImage && (
+                    <div className="relative w-full aspect-[16/10] overflow-hidden rounded-xl border border-border/40 mt-4 block md:hidden bg-muted/10">
+                      {project.featuredImage.endsWith(".mp4") ? (
+                        <video
+                          src={project.featuredImage}
+                          autoPlay
+                          muted
+                          loop
+                          playsInline
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <Image
+                          src={project.featuredImage}
+                          alt={project.title}
+                          fill
+                          sizes="(max-width: 768px) 100vw, 420px"
+                          className="object-cover"
+                        />
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-3 font-mono text-[11px] text-muted-foreground uppercase tracking-widest shrink-0 self-start md:self-auto">

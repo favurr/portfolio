@@ -263,3 +263,41 @@
     text-underline-offset: 4px;
   }
 }
+
+/* Shimmer Loading Text Effect */
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-muted-foreground) 25%,
+    var(--color-foreground) 50%,
+    var(--color-muted-foreground) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer-animation 2s infinite linear;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  display: inline-block;
+}
+
+@keyframes shimmer-animation {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+@theme {
+  --animate-marquee: marquee var(--duration, 30s) linear infinite;
+
+  @keyframes marquee {
+    from {
+      transform: translateX(0%);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
+}

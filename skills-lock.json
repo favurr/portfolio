@@ -19,6 +19,12 @@
       "skillPath": "skills/brandkit/SKILL.md",
       "computedHash": "735007879f5110aeae1e981a53fe74a12afde70347f9773dacd50e4697a091bf"
     },
+    "debugging-with-ably-cli": {
+      "source": "ably/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/debugging-with-ably-cli/SKILL.md",
+      "computedHash": "4d9ada94d237044e82f6b4c2caacd800b8e6a6fa7f7762accdd36c8fc19fbc86"
+    },
     "design-taste-frontend": {
       "source": "leonxlnx/taste-skill",
       "sourceType": "github",
@@ -138,6 +144,12 @@
       "sourceType": "github",
       "skillPath": "skills/tiptap/SKILL.md",
       "computedHash": "7f5d1f17762bc7c41e305edad1491f6917da9a001b75db60f48538176fde403d"
+    },
+    "using-ably": {
+      "source": "ably/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/using-ably/SKILL.md",
+      "computedHash": "324bd36d63edabcb0c12b062e780c51ab8e21564254622e015b7899694e436c7"
     }
   }
 }

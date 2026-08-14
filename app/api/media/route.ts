@@ -20,7 +20,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const mediaItems = await mediaService.getMediaItems();
+    const { searchParams } = new URL(req.url);
+    const projectId = searchParams.get("projectId") || undefined;
+
+    const mediaItems = await mediaService.getMediaItems(projectId);
     return NextResponse.json(mediaItems);
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -36,6 +39,28 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const contentType = req.headers.get("content-type") || "";
+    
+    if (contentType.includes("application/json")) {
+      const body = await req.json();
+      const { url, key, mimeType, fileSize, projectId } = body;
+      
+      if (!url || !key) {
+        return NextResponse.json({ error: "Missing required registration parameters" }, { status: 400 });
+      }
+
+      const mediaItem = await mediaService.registerMediaItem({
+        url,
+        key,
+        mimeType: mimeType || "image/jpeg",
+        fileSize: fileSize || 0,
+        projectId: projectId || undefined,
+      });
+
+      return NextResponse.json(mediaItem);
+    }
+
+    // Fallback to traditional multipart upload
     const formData = await req.formData();
     const file = formData.get("file") as File;
     const projectId = formData.get("projectId") as string | undefined;

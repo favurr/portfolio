@@ -26,17 +26,22 @@ import {
   Search,
   ArrowUp,
   ArrowDown,
-  ChevronDown
+  ChevronDown,
+  Eye,
+  X,
+  Loader2,
 } from "lucide-react";
 import {
   createProjectAction,
   updateProjectAction,
+  batchSaveProjectAction,
   deleteProjectAction,
   addSectionAction,
   updateSectionAction,
   deleteSectionAction,
   reorderSectionsAction
 } from "../actions";
+import { SectionRenderer } from "@/components/project/section-renderer";
 
 interface Project {
   id: string;
@@ -79,13 +84,48 @@ export default function StudioProjectsPage() {
   const [localProjectState, setLocalProjectState] = useState<(Project & { sections: ProjectSection[] }) | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
+
+  // Custom confirmation dialog states (to replace native confirm boxes)
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    actionLabel: string;
+  }>({
+    isOpen: false,
+    title: "",
+    description: "",
+    actionLabel: "",
+  });
+
+  const triggerConfirmation = (title: string, description: string, actionLabel: string, action: () => void) => {
+    setPendingAction(() => action);
+    setConfirmDialog({
+      isOpen: true,
+      title,
+      description,
+      actionLabel,
+    });
+  };
   
   // Dropdown & Search filters
   const [showDropdown, setShowDropdown] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
   
   // Editor panel tab configuration
-  const [activeTab, setActiveTab] = useState<"details" | "sections" | "media">("details");
+  const [activeTab, setActiveTab] = useState<"metadata" | "sections" | "media">("metadata");
   
   // Creation dialog state
   const [isCreating, setIsCreating] = useState(false);
@@ -97,7 +137,26 @@ export default function StudioProjectsPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  // Track which section IDs have local unsaved edits so we only re-save those
+  const [dirtySectionIds, setDirtySectionIds] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const [showPreviewHeader, setShowPreviewHeader] = useState(true);
+  const lastPreviewScrollY = useRef(0);
+
+  // Scroll-hide/show for sticky toolbar
+  const [showToolbar, setShowToolbar] = useState(true);
+  const lastScrollY = useRef(0);
+
+  const handlePreviewScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const currentScrollY = e.currentTarget.scrollTop;
+    if (currentScrollY > lastPreviewScrollY.current && currentScrollY > 80) {
+      setShowPreviewHeader(false);
+    } else {
+      setShowPreviewHeader(true);
+    }
+    lastPreviewScrollY.current = currentScrollY;
+  };
   
   // Custom media storage log
   const [mediaLibrary, setMediaLibrary] = useState<Array<{ id: string; url: string; mimeType: string }>>([]);
@@ -106,7 +165,7 @@ export default function StudioProjectsPage() {
 
   // Load project list
   const loadProjects = () => {
-    fetch("/api/projects")
+    fetch("/api/projects?all=true")
       .then((res) => res.json())
       .then((data) => {
         if (data && Array.isArray(data)) {
@@ -119,6 +178,68 @@ export default function StudioProjectsPage() {
   useEffect(() => {
     loadProjects();
   }, []);
+
+  // Scroll direction tracker — hide toolbar on down, show on up
+  useEffect(() => {
+    const mainEl = document.querySelector("main");
+    if (!mainEl) return;
+    const handleScroll = () => {
+      const currentY = mainEl.scrollTop;
+      if (currentY < 80) {
+        setShowToolbar(true);
+      } else if (currentY > lastScrollY.current + 8) {
+        setShowToolbar(false);
+      } else if (currentY < lastScrollY.current - 8) {
+        setShowToolbar(true);
+      }
+      lastScrollY.current = currentY;
+    };
+    mainEl.addEventListener("scroll", handleScroll, { passive: true });
+    return () => mainEl.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  // 1. Browser tab closing/reloading warning (system native prompt block)
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = "Discard unsaved changes?";
+        return e.returnValue;
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isDirty]);
+
+  // 2. Global client-side route click interceptor (for studio layout sidebar navigation links)
+  useEffect(() => {
+    const handleAnchorClick = (e: MouseEvent) => {
+      if (!isDirty) return;
+
+      const target = e.target as HTMLElement;
+      const anchor = target.closest("a");
+
+      if (anchor && anchor.getAttribute("target") !== "_blank") {
+        const href = anchor.getAttribute("href");
+        if (href && (href.startsWith("/") || href.startsWith("http"))) {
+          e.preventDefault();
+          triggerConfirmation(
+            "Unsaved Changes",
+            "You have unsaved changes in this project. Leaving the editor will discard them. Do you want to proceed?",
+            "Discard & Leave",
+            () => {
+              // Reset isDirty so the beforeunload and interceptor let navigation succeed
+              setIsDirty(false);
+              router.push(href);
+            }
+          );
+        }
+      }
+    };
+
+    document.addEventListener("click", handleAnchorClick, true);
+    return () => document.removeEventListener("click", handleAnchorClick, true);
+  }, [isDirty, router]);
 
   // Fetch full project structure when selection changes
   useEffect(() => {
@@ -141,9 +262,10 @@ export default function StudioProjectsPage() {
       .catch(() => {});
   }, [selectedProjectId]);
 
-  // Sync general media catalog
+  // Sync project-specific media catalog
   useEffect(() => {
-    fetch("/api/media")
+    if (!selectedProjectId) return;
+    fetch(`/api/media?projectId=${selectedProjectId}`)
       .then((res) => res.json())
       .then((data) => {
         if (Array.isArray(data)) {
@@ -164,10 +286,12 @@ export default function StudioProjectsPage() {
         slug,
         description,
         projectType: [],
-        status: "draft",
+        status: "in progress",
       });
       setIsCreating(false);
       setSelectedProjectId(newProject.id);
+      // Add to local list without a refetch
+      setProjects((prev) => [...prev, newProject as any]);
       setTitle("");
       setSlug("");
       setDescription("");
@@ -181,24 +305,21 @@ export default function StudioProjectsPage() {
 
   // Perform project updates to save local state to database
   const handleSaveChanges = async () => {
-    if (!selectedProjectId || !localProjectState) return;
+    if (!selectedProjectId || !localProjectState || saveStatus === "saving") return;
     setSaveStatus("saving");
     try {
-      // 1. Save general meta fields
       const { sections, ...metaFields } = localProjectState;
-      const updatedProject = await updateProjectAction(selectedProjectId, metaFields);
 
-      // 2. Save all sections sequentially
-      for (const section of sections) {
-        await updateSectionAction(selectedProjectId, section.id, {
-          title: section.title,
-          subtitle: section.subtitle,
-          content: section.content,
-          props: section.props
-        });
-      }
+      // Only send sections that were actually edited (dirty tracking)
+      const sectionsToSave = sections
+        .filter((s) => dirtySectionIds.has(s.id))
+        .map((s) => ({ id: s.id, title: s.title, subtitle: s.subtitle, content: s.content, props: s.props }));
 
-      // Sync master list
+      // ONE server action → ONE DB transaction → ONE network round-trip
+      const updatedProject = await batchSaveProjectAction(selectedProjectId, metaFields, sectionsToSave);
+
+      // Clear dirty tracking and sync master list
+      setDirtySectionIds(new Set());
       setProjects((prev) => prev.map((p) => (p.id === selectedProjectId ? { ...p, ...updatedProject } : p)));
       setIsDirty(false);
       setSaveStatus("saved");
@@ -225,6 +346,8 @@ export default function StudioProjectsPage() {
         sections: prev.sections.map((s: any) => s.id === sectionId ? { ...s, ...fields } : s)
       };
     });
+    // Mark this specific section as dirty so we only save it (not all sections)
+    setDirtySectionIds((prev) => new Set(prev).add(sectionId));
     setIsDirty(true);
   };
 
@@ -260,15 +383,50 @@ export default function StudioProjectsPage() {
 
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("projectId", selectedProjectId);
+        
+        // 1. Fetch secure client authorization signature
+        const authRes = await fetch("/api/media/signature");
+        const authData = await authRes.json();
+        if (authData.error) throw new Error(authData.error);
 
-        const res = await fetch("/api/media", {
+        // 2. Build direct ImageKit upload payload
+        const uploadData = new FormData();
+        uploadData.append("file", file);
+        uploadData.append("fileName", file.name);
+        uploadData.append("publicKey", authData.publicKey);
+        uploadData.append("signature", authData.signature);
+        uploadData.append("expire", authData.expire);
+        uploadData.append("token", authData.token);
+        uploadData.append("folder", "favurr/portfolio/projects");
+
+        // 3. Post directly to ImageKit upload API
+        const uploadRes = await fetch("https://upload.imagekit.io/api/v1/files/upload", {
           method: "POST",
-          body: formData,
+          body: uploadData,
         });
-        const data = await res.json();
+        
+        if (!uploadRes.ok) {
+          throw new Error(`Direct upload failed with status ${uploadRes.status}`);
+        }
+
+        const uploadResult = await uploadRes.json();
+
+        // 4. Register the asset in local Postgres database
+        const registerRes = await fetch("/api/media", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            url: uploadResult.url,
+            key: uploadResult.fileId,
+            mimeType: file.type,
+            fileSize: file.size,
+            projectId: selectedProjectId,
+          }),
+        });
+
+        const data = await registerRes.json();
         if (data.url) {
           uploadedUrls.push(data.url);
           setMediaLibrary((prev) => [data, ...prev]);
@@ -334,12 +492,19 @@ export default function StudioProjectsPage() {
 
   const handleDeleteProject = async () => {
     if (!selectedProjectId) return;
-    if (!confirm("Are you sure you want to delete this project? This cannot be undone.")) return;
-    try {
-      await deleteProjectAction(selectedProjectId);
-      setSelectedProjectId(null);
-      loadProjects();
-    } catch (err) {}
+    triggerConfirmation(
+      "Delete Project Case Study?",
+      "Are you sure you want to delete this project? This will permanently erase all sections, descriptions, and metadata. This action cannot be undone.",
+      "Delete Case Study",
+      async () => {
+        try {
+          await deleteProjectAction(selectedProjectId);
+          // Remove from local list without refetch
+          setProjects((prev) => prev.filter((p) => p.id !== selectedProjectId));
+          setSelectedProjectId(null);
+        } catch (err) {}
+      }
+    );
   };
 
   // Dropdown list computation
@@ -350,9 +515,14 @@ export default function StudioProjectsPage() {
   const currentProjectName = localProjectState?.title || "Select Project Case Study...";
 
   return (
-    <div className="space-y-8 w-full max-w-7xl mx-auto">
-      {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/40 pb-6">
+    <div className="space-y-2 w-full max-w-7xl mx-auto">
+      {/* Scroll-aware toolbar: hides on scroll down, reveals immediately on scroll up */}
+      <div
+        className={`sticky top-0 z-40 -mx-6 md:-mx-10 transition-transform duration-300 ease-in-out ${
+          showToolbar ? "translate-y-0" : "translate-y-[-200%]"
+        }`}
+      >
+        <div className="px-6 md:px-10 py-2 bg-background/95 backdrop-blur border-b border-border/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="space-y-3">
           <div className="font-mono text-xs uppercase tracking-widest text-muted-foreground flex items-center gap-2">
             <FolderKanban className="w-3.5 h-3.5" />
@@ -360,13 +530,13 @@ export default function StudioProjectsPage() {
           </div>
           
           {/* Custom Dropdown Selector with Search Input */}
-          <div className="relative">
+          <div ref={dropdownRef} className="relative">
             <button
               onClick={() => setShowDropdown(!showDropdown)}
-              className="px-5 py-3 rounded-xl border border-border bg-muted/10 text-left font-serif text-2xl text-foreground flex items-center justify-between gap-4 cursor-pointer hover:border-border/80 min-w-[280px]"
+              className="px-5 py-3 rounded-xl border border-border bg-muted/10 text-left font-serif text-xl sm:text-2xl text-foreground flex items-center justify-between gap-4 cursor-pointer hover:border-border/80 w-full sm:w-auto sm:min-w-[320px]"
             >
-              <span>{currentProjectName}</span>
-              <ChevronDown className="w-5 h-5 text-muted-foreground" />
+              <span className="truncate max-w-62.5 sm:max-w-87.5 md:max-w-112.5 block">{currentProjectName}</span>
+              <ChevronDown className="w-5 h-5 text-muted-foreground shrink-0" />
             </button>
             
             {showDropdown && (
@@ -387,9 +557,21 @@ export default function StudioProjectsPage() {
                     <button
                       key={p.id}
                       onClick={() => {
-                        if (isDirty && !confirm("Discard unsaved changes?")) return;
-                        setSelectedProjectId(p.id);
-                        setShowDropdown(false);
+                        if (isDirty) {
+                          triggerConfirmation(
+                            "Unsaved Changes",
+                            "You have unsaved changes in this project. Switching case studies will discard them. Do you want to proceed?",
+                            "Discard & Switch",
+                            () => {
+                              setIsDirty(false);
+                              setSelectedProjectId(p.id);
+                              setShowDropdown(false);
+                            }
+                          );
+                        } else {
+                          setSelectedProjectId(p.id);
+                          setShowDropdown(false);
+                        }
                       }}
                       className="w-full text-left px-3 py-2 rounded-lg text-xs font-sans hover:bg-muted transition-colors flex items-center justify-between"
                     >
@@ -406,26 +588,46 @@ export default function StudioProjectsPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4 self-end sm:self-auto">
-          {saveStatus === "saving" && <span className="text-xs font-mono text-muted-foreground animate-pulse">Saving changes...</span>}
-          {saveStatus === "saved" && <span className="text-xs font-mono text-emerald-400 font-medium">Saved to Database</span>}
-          {saveStatus === "error" && <span className="text-xs font-mono text-rose-400 font-medium">Failed to save</span>}
-
-          {/* Explicit Save Button for unsaved states */}
-          {localProjectState && (
-            <button
-              onClick={handleSaveChanges}
-              disabled={!isDirty || saveStatus === "saving"}
-              className={`font-mono text-xs uppercase tracking-widest px-5 py-3 rounded-full transition-all inline-flex items-center gap-2 cursor-pointer ${
-                isDirty 
-                  ? "bg-emerald-500 hover:bg-emerald-600 text-white shadow-md"
-                  : "bg-muted text-muted-foreground border border-border cursor-not-allowed"
-              }`}
-            >
-              <Save className="w-3.5 h-3.5" />
-              <span>{isDirty ? "Save Changes" : "No Changes"}</span>
-            </button>
-          )}
+        <div className="flex items-center gap-3 self-end sm:self-auto">
+           {/* Explicit Save/Preview Button for unsaved states */}
+           {localProjectState && (
+             <>
+               <button
+                 type="button"
+                 onClick={() => setIsPreviewing(true)}
+                 className="font-mono text-xs uppercase tracking-widest px-5 py-3 rounded-full transition-all inline-flex items-center gap-2 cursor-pointer bg-background hover:bg-muted border border-border text-foreground shadow-sm"
+               >
+                 <Eye className="w-3.5 h-3.5" />
+                 <span>Preview Page</span>
+               </button>
+               
+               <button
+                 onClick={handleSaveChanges}
+                 disabled={!isDirty || saveStatus === "saving"}
+                 className={`font-mono text-xs uppercase tracking-widest px-5 py-3 rounded-full transition-all inline-flex items-center gap-2 min-w-36.25 justify-center cursor-pointer ${
+                   saveStatus === "saving"
+                     ? "bg-emerald-500/70 text-white cursor-wait"
+                     : saveStatus === "saved"
+                     ? "bg-emerald-600 text-white"
+                     : saveStatus === "error"
+                     ? "bg-rose-950 border border-rose-800 text-rose-300"
+                     : isDirty
+                     ? "bg-emerald-500 hover:bg-emerald-600 text-white shadow-md"
+                     : "bg-muted text-muted-foreground border border-border cursor-not-allowed"
+                 }`}
+               >
+                 {saveStatus === "saving" ? (
+                   <><Loader2 className="w-3.5 h-3.5 animate-spin" /><span>Saving...</span></>
+                 ) : saveStatus === "saved" ? (
+                   <><Save className="w-3.5 h-3.5" /><span>Saved ✓</span></>
+                 ) : saveStatus === "error" ? (
+                   <><Save className="w-3.5 h-3.5" /><span>Failed — Retry</span></>
+                 ) : (
+                   <><Save className="w-3.5 h-3.5" /><span>{isDirty ? "Save Changes" : "No Changes"}</span></>
+                 )}
+               </button>
+             </>
+           )}
 
           <button
             onClick={() => setIsCreating(true)}
@@ -434,6 +636,7 @@ export default function StudioProjectsPage() {
             <Plus className="w-3.5 h-3.5" />
             <span>New Project</span>
           </button>
+        </div>
         </div>
       </div>
 
@@ -446,22 +649,22 @@ export default function StudioProjectsPage() {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-border/40 px-6 py-4 bg-muted/20 gap-4">
               <div className="flex items-center gap-1">
                 <button
-                  onClick={() => setActiveTab("details")}
-                  className={`px-3 py-1.5 rounded-md font-mono text-xs uppercase tracking-wider transition-all cursor-pointer ${activeTab === "details" ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
+                  onClick={() => setActiveTab("metadata")}
+                  className={`px-3 py-1.5 rounded-md font-mono text-xs uppercase tracking-wider transition-all cursor-pointer ${activeTab === "metadata" ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
                 >
-                  Settings &amp; Specs
+                  MetaData
                 </button>
                 <button
                   onClick={() => setActiveTab("sections")}
                   className={`px-3 py-1.5 rounded-md font-mono text-xs uppercase tracking-wider transition-all cursor-pointer ${activeTab === "sections" ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
                 >
-                  Markdown / Dynamic Layout
+                  Sections
                 </button>
                 <button
                   onClick={() => setActiveTab("media")}
                   className={`px-3 py-1.5 rounded-md font-mono text-xs uppercase tracking-wider transition-all cursor-pointer ${activeTab === "media" ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
                 >
-                  Media Library
+                  Media
                 </button>
               </div>
 
@@ -486,7 +689,7 @@ export default function StudioProjectsPage() {
             </div>
 
             {/* TAB CONTENT: Details & Specifications */}
-            {activeTab === "details" && (
+            {activeTab === "metadata" && (
               <div className="p-6 md:p-8 space-y-8">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                   {/* General Specifications */}
@@ -501,10 +704,9 @@ export default function StudioProjectsPage() {
                           onChange={(e) => updateLocalMetaField({ status: e.target.value })}
                           className="w-full rounded-md border border-border/60 bg-background/50 px-3 py-2 text-xs text-foreground focus:outline-none focus:border-foreground"
                         >
-                          <option value="draft">Draft (CMS Editor only)</option>
                           <option value="live">Live (Case Study Online)</option>
-                          <option value="in progress">In Progress (Work in Progress status)</option>
-                          <option value="archived">Archived (Archived status badge)</option>
+                          <option value="in progress">In Progress (Work in Progress)</option>
+                          <option value="archived">Archived</option>
                         </select>
                       </div>
 
@@ -656,17 +858,7 @@ export default function StudioProjectsPage() {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 pt-2">
-                      <label className="flex items-center gap-2 cursor-pointer font-mono text-[10px] uppercase tracking-wider text-foreground">
-                        <input
-                          type="checkbox"
-                          checked={localProjectState.featured}
-                          onChange={(e) => updateLocalMetaField({ featured: e.target.checked })}
-                          className="rounded border-border bg-background focus:ring-0 text-foreground cursor-pointer"
-                        />
-                        <span>Featured on Home (Show on Landing Page)</span>
-                      </label>
-                    </div>
+
                   </div>
 
                   {/* Banner & Detailed Overview fields */}
@@ -853,61 +1045,157 @@ export default function StudioProjectsPage() {
                                       className="hidden"
                                       onChange={(e) => handleFileUpload(e, "sectionContent", section.id)}
                                     />
-                                  </div>
-                                ) : section.componentKey === "gallery" ? (
-                                  <div className="space-y-4">
-                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border border-border/40 rounded-xl p-3 bg-muted/10 text-xs font-mono">
-                                      <div className="flex items-center gap-6">
-                                        {/* Bento Grid Option */}
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                          <input
-                                            type="checkbox"
-                                            checked={section.props?.bento || false}
-                                            onChange={(e) => updateLocalSection(section.id, { props: { ...section.props, bento: e.target.checked } })}
-                                            className="rounded border-border focus:ring-0"
-                                          />
-                                          <span>Bento Grid Layout</span>
-                                        </label>
 
-                                        {/* Compact Padding Option */}
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                          <input
-                                            type="checkbox"
-                                            checked={section.props?.compact || false}
-                                            onChange={(e) => updateLocalSection(section.id, { props: { ...section.props, compact: e.target.checked } })}
-                                            className="rounded border-border focus:ring-0"
-                                          />
-                                          <span>Compact Spacing</span>
-                                        </label>
-
-                                        {/* Full Bleed Layout Option */}
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                          <input
-                                            type="checkbox"
-                                            checked={section.props?.fullBleed || false}
-                                            onChange={(e) => updateLocalSection(section.id, { props: { ...section.props, fullBleed: e.target.checked } })}
-                                            className="rounded border-border focus:ring-0"
-                                          />
-                                          <span>Full Bleed Layout</span>
-                                        </label>
-                                      </div>
-
-                                      {/* Custom Border Radius Options */}
-                                      <div className="flex items-center gap-2">
-                                        <span>Border Radius:</span>
+                                    {/* Rich Text styling and animations controls */}
+                                    <div className="flex flex-wrap items-center gap-4 border border-border/40 rounded-xl p-3 bg-muted/10 text-xs font-mono mt-2">
+                                      
+                                      {/* Background Style */}
+                                      <div className="flex items-center gap-1.5">
+                                        <span>Background:</span>
                                         <select
-                                          value={section.props?.radius || "md"}
-                                          onChange={(e) => updateLocalSection(section.id, { props: { ...section.props, radius: e.target.value } })}
+                                          value={section.props?.bgStyle || "transparent"}
+                                          onChange={(e) => updateLocalSection(section.id, { props: { ...section.props, bgStyle: e.target.value } })}
                                           className="bg-background border border-border rounded px-2 py-0.5"
                                         >
-                                          <option value="none">None</option>
-                                          <option value="sm">Small</option>
-                                          <option value="md">Medium</option>
-                                          <option value="lg">Large</option>
-                                          <option value="full">Full Rounded</option>
+                                          <option value="transparent">Transparent</option>
+                                          <option value="card">Subtle Card</option>
+                                        </select>
+                                      </div>
+
+                                      {/* Scroll Animation style */}
+                                      <div className="flex items-center gap-1.5">
+                                        <span>Scroll Entrance:</span>
+                                        <select
+                                          value={section.props?.animation || "slide"}
+                                          onChange={(e) => updateLocalSection(section.id, { props: { ...section.props, animation: e.target.value } })}
+                                          className="bg-background border border-border rounded px-2 py-0.5"
+                                        >
+                                          <option value="slide">Slide Up (Smooth)</option>
+                                          <option value="fade">Fade In (Gentle)</option>
+                                          <option value="scale">Scale Up (Dynamic)</option>
+                                          <option value="none">None (Instant)</option>
                                         </select>
                                       </div>
                                     </div>
+                                  </div>
+                                ) : section.componentKey === "gallery" ? (
+                                  <div className="space-y-4">
+                                      <div className="flex flex-col gap-4 border border-border/40 rounded-xl p-4 bg-muted/10 text-xs font-mono">
+                                        <div className="flex flex-wrap items-center gap-6">
+                                          {/* Layout Style Dropdown */}
+                                          <div className="flex items-center gap-2">
+                                            <span className="font-semibold text-foreground">Layout Style:</span>
+                                            <select
+                                              value={section.props?.fullBleed ? "bleed" : section.props?.carousel ? "carousel" : section.props?.bento ? "bento" : "grid"}
+                                              onChange={(e) => {
+                                                const val = e.target.value;
+                                                const newProps = { ...section.props };
+                                                newProps.fullBleed = val === "bleed";
+                                                newProps.carousel = val === "carousel";
+                                                newProps.bento = val === "bento";
+                                                updateLocalSection(section.id, { props: newProps });
+                                              }}
+                                              className="bg-background border border-border rounded px-2.5 py-1 text-foreground"
+                                            >
+                                              <option value="grid">Grid (Classic 2-Column)</option>
+                                              <option value="bento">Bento Grid (Asymmetric Collage)</option>
+                                              <option value="carousel">Carousel (Horizontal Slider)</option>
+                                              <option value="bleed">Full Screen (Edge-to-Edge)</option>
+                                            </select>
+                                          </div>
+
+                                          {/* Image Fit Selection */}
+                                          <div className="flex items-center gap-2">
+                                            <span className="font-semibold text-foreground">Image Fit:</span>
+                                            <select
+                                              value={section.props?.fitMode || "cover"}
+                                              onChange={(e) => updateLocalSection(section.id, { props: { ...section.props, fitMode: e.target.value } })}
+                                              className="bg-background border border-border rounded px-2.5 py-1 text-foreground"
+                                            >
+                                              <option value="cover">Crop & Fill Box (Cover)</option>
+                                              <option value="contain">Fit Box with Borders (Contain)</option>
+                                              <option value="natural">Original Proportions (No Crop)</option>
+                                            </select>
+                                          </div>
+
+                                          {/* Lightbox Zoom Option */}
+                                          <label className="flex items-center gap-2 cursor-pointer select-none">
+                                            <input
+                                              type="checkbox"
+                                              checked={section.props?.lightbox || false}
+                                              onChange={(e) => updateLocalSection(section.id, { props: { ...section.props, lightbox: e.target.checked } })}
+                                              className="rounded border-border focus:ring-0 text-foreground bg-background"
+                                            />
+                                            <span className="font-semibold">Enable Click to Zoom (Lightbox)</span>
+                                          </label>
+                                        </div>
+
+                                        {/* Secondary layout settings - hidden on Full Bleed since it spans full screen */}
+                                        {!section.props?.fullBleed && (
+                                          <div className="flex flex-wrap items-center gap-6 border-t border-border/20 pt-3.5">
+                                            {/* Box Proportions (Aspect Ratio) - Hidden if fitMode is natural (which enforces actual height) */}
+                                            {section.props?.fitMode !== "natural" && (
+                                              <div className="flex items-center gap-2">
+                                                <span>Box Proportions:</span>
+                                                <select
+                                                  value={section.props?.aspectRatio || "video"}
+                                                  onChange={(e) => updateLocalSection(section.id, { props: { ...section.props, aspectRatio: e.target.value } })}
+                                                  className="bg-background border border-border rounded px-2 py-0.5"
+                                                >
+                                                  <option value="video">16:9 Landscape</option>
+                                                  <option value="square">1:1 Square</option>
+                                                  <option value="4-3">4:3 Standard</option>
+                                                  <option value="21-9">21:9 Widescreen</option>
+                                                  <option value="auto">Auto Dimensions</option>
+                                                </select>
+                                              </div>
+                                            )}
+
+                                            {/* Spacing Gap */}
+                                            <div className="flex items-center gap-2">
+                                              <span>Image Spacing:</span>
+                                              <select
+                                                value={section.props?.gapSize || "md"}
+                                                onChange={(e) => updateLocalSection(section.id, { props: { ...section.props, gapSize: e.target.value } })}
+                                                className="bg-background border border-border rounded px-2 py-0.5"
+                                              >
+                                                <option value="none">Seamless (No Gap)</option>
+                                                <option value="sm">Tight</option>
+                                                <option value="md">Balanced</option>
+                                                <option value="lg">Spacious</option>
+                                              </select>
+                                            </div>
+
+                                            {/* Border Corners */}
+                                            <div className="flex items-center gap-2">
+                                              <span>Image Corners:</span>
+                                              <select
+                                                value={section.props?.radius || "md"}
+                                                onChange={(e) => updateLocalSection(section.id, { props: { ...section.props, radius: e.target.value } })}
+                                                className="bg-background border border-border rounded px-2 py-0.5"
+                                              >
+                                                <option value="none">Square Edge</option>
+                                                <option value="sm">Soft Round</option>
+                                                <option value="md">Rounded</option>
+                                                <option value="lg">Deep Round</option>
+                                                <option value="full">Circle / Pill</option>
+                                              </select>
+                                            </div>
+                                          </div>
+                                        )}
+
+                                        {/* Simple photographer helper hints */}
+                                        <div className="text-[10px] text-muted-foreground/80 leading-relaxed border-t border-border/20 pt-2 font-sans">
+                                          💡 {section.props?.fullBleed 
+                                            ? "Full Screen layout spans edge-to-edge. Spacing, corners, and ratios are locked." 
+                                            : section.props?.carousel 
+                                            ? "Carousel Slider lays images in a swipeable horizontal row. Perfect for a series of photos." 
+                                            : section.props?.bento 
+                                            ? "Bento Collage alternates between full-width and square frames for a stylized, non-uniform grid look." 
+                                            : "Classic Grid places photos in a balanced 2-column layout side-by-side."}
+                                          {section.props?.fitMode === "natural" && " | Natural Fit displays images in their original proportions without cropping."}
+                                        </div>
+                                      </div>
 
                                     <div className="flex items-center justify-between border-t border-border/20 pt-2">
                                       <label className="block font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Gallery Images / Video Assets</label>
@@ -1099,8 +1387,251 @@ export default function StudioProjectsPage() {
               </Button>
             </DialogFooter>
           </form>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
+          </DialogContent>
+        </Dialog>
+
+        {/* Full-Screen Live Project Preview Overlay (Sandboxed & Instant) */}
+        {isPreviewing && localProjectState && (
+          <div 
+            onScroll={handlePreviewScroll}
+            className="fixed inset-0 z-9999 bg-background overflow-y-auto animate-in fade-in duration-200"
+          >
+            {/* Sticky top bar controls */}
+            <div className={`sticky top-0 z-10000 w-full px-6 md:px-12 py-5 bg-background/95 backdrop-blur-md border-b border-border/40 flex items-center justify-between transition-all duration-300 ${
+              showPreviewHeader ? "translate-y-0 opacity-100" : "-translate-y-full opacity-0"
+            }`}>
+              <span className="font-mono text-xs text-muted-foreground uppercase tracking-widest">
+                Live Preview Mode (Unsaved Draft)
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsPreviewing(false);
+                  setShowPreviewHeader(true);
+                }}
+                className="flex items-center gap-2 font-mono text-xs uppercase tracking-widest bg-muted/80 border border-border hover:bg-muted text-foreground px-4 py-2.5 rounded-full cursor-pointer transition-colors shadow-md"
+              >
+                <X className="w-4 h-4" />
+                <span>Close Preview</span>
+              </button>
+            </div>
+
+            {/* Preview Body Container */}
+            <div className="max-w-6xl mx-auto px-6 md:px-12 py-12">
+              {/* General Meta Info */}
+              <div className="flex items-center justify-between mb-16 pb-6 border-b border-border/40 font-mono text-xs text-muted-foreground">
+                <span>Selected Work Preview</span>
+                <span>Project Archive &bull; {localProjectState.year || "2026"}</span>
+              </div>
+
+             {/* Headline intro details */}
+             <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-start mb-20">
+               <div className="lg:col-span-8 space-y-6">
+                 <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
+                   {localProjectState.category || "Design Engineering"}
+                 </span>
+                 <h1 className="font-serif text-5xl sm:text-7xl lg:text-8xl font-normal tracking-tight text-foreground leading-[1.05]">
+                   {localProjectState.title}
+                 </h1>
+               </div>
+
+               <div className="lg:col-span-4 lg:pt-10 space-y-6">
+                 <p className="font-sans text-base sm:text-lg text-muted-foreground leading-relaxed">
+                   {localProjectState.description}
+                 </p>
+                 {localProjectState.liveDemo && (
+                   <div className="inline-flex items-center gap-2 font-mono text-xs uppercase tracking-widest bg-foreground text-background px-6 py-3 rounded-full">
+                     <span>Live Demo</span>
+                     <ExternalLink className="w-3 h-3" />
+                   </div>
+                 )}
+               </div>
+             </div>
+
+             {/* Dynamic Metadata Attributes */}
+             <div className="grid grid-cols-2 md:grid-cols-4 gap-8 py-8 border-y border-border/40 mb-20 font-mono text-xs">
+               <div>
+                 <span className="text-muted-foreground uppercase tracking-widest block mb-2">Client</span>
+                 <span className="text-foreground">{localProjectState.client || "Self-Initiated"}</span>
+               </div>
+               <div>
+                 <span className="text-muted-foreground uppercase tracking-widest block mb-2">Year</span>
+                 <span className="text-foreground">{localProjectState.year || "2026"}</span>
+               </div>
+               <div>
+                 <span className="text-muted-foreground uppercase tracking-widest block mb-2">Services</span>
+                 <span className="text-foreground">{(localProjectState.services || []).join(", ") || "Design & Development"}</span>
+               </div>
+               {localProjectState.projectType && localProjectState.projectType.length > 0 && (
+                 <div>
+                   <span className="text-muted-foreground uppercase tracking-widest block mb-2">Type</span>
+                   <span className="text-foreground">{localProjectState.projectType.join(", ")}</span>
+                 </div>
+               )}
+             </div>
+
+             {/* Client Overview Block */}
+             {localProjectState.overview && (
+               <div className="max-w-4xl mb-24 space-y-4">
+                 <span className="font-mono text-xs uppercase tracking-widest text-muted-foreground block mb-2">Overview</span>
+                 <div
+                   className="prose prose-invert max-w-none text-muted-foreground text-base sm:text-lg leading-relaxed prose-headings:font-serif prose-headings:font-normal prose-headings:text-foreground prose-a:text-foreground prose-a:underline"
+                   dangerouslySetInnerHTML={{ __html: localProjectState.overview }}
+                 />
+               </div>
+             )}
+
+             {/* Featured Image */}
+             {localProjectState.featuredImage && (
+               <div className="mb-28 overflow-hidden rounded-2xl border border-border/60 bg-muted/20 aspect-video w-full">
+                 {localProjectState.featuredImage.endsWith(".mp4") ? (
+                   <video src={localProjectState.featuredImage} autoPlay muted loop className="w-full h-full object-cover object-top" />
+                 ) : (
+                   <img
+                     src={localProjectState.featuredImage}
+                     alt={localProjectState.title}
+                     className="w-full h-full object-cover object-top"
+                   />
+                 )}
+               </div>
+             )}
+
+             {/* Dynamic Section Blocks Render list */}
+             <div className="space-y-24 border-t border-border/20 pt-16">
+               {(localProjectState.sections || []).map((sec, idx) => (
+                 <div key={sec.id} className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-start border-b border-border/10 pb-16">
+                   {/* Left heading info */}
+                   <div className="lg:col-span-3">
+                     <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-widest block mb-2">
+                       0{idx + 1} &bull; {sec.componentKey}
+                     </span>
+                     {sec.title && (
+                       <h3 className="font-serif text-2xl text-foreground font-medium tracking-tight">
+                         {sec.title}
+                       </h3>
+                     )}
+                     {sec.subtitle && (
+                       <p className="font-sans text-xs text-muted-foreground mt-2 leading-relaxed">
+                         {sec.subtitle}
+                       </p>
+                     )}
+                   </div>
+
+                   {/* Right layout block preview */}
+                   <div className="lg:col-span-9">
+                     {sec.componentKey === "rich-text" ? (
+                       <div className={`prose prose-invert max-w-none text-muted-foreground leading-relaxed text-left ${sec.props?.bgStyle === "card" ? "p-8 bg-muted/10 border border-border/40 rounded-xl" : ""}`}>
+                         {sec.content ? (
+                           <div dangerouslySetInnerHTML={{ __html: sec.content }} />
+                         ) : (
+                           <p className="font-mono text-xs italic text-muted-foreground/60">Empty Text Block</p>
+                         )}
+                       </div>
+                     ) : sec.componentKey === "gallery" ? (
+                        sec.props?.carousel ? (
+                          <div className="relative w-full">
+                            <div className="flex overflow-x-auto snap-x snap-mandatory gap-4 no-scrollbar pb-2">
+                              {(sec.props?.images || []).map((img: any, imgIdx: number) => {
+                                const radiusMap = { none: "rounded-none", sm: "rounded-md", md: "rounded-lg", lg: "rounded-xl", full: "rounded-2xl" };
+                                const radClass = radiusMap[sec.props?.radius as keyof typeof radiusMap] || radiusMap.md;
+                                const isNatural = sec.props?.fitMode === "natural";
+                                
+                                return (
+                                  <div 
+                                    key={imgIdx} 
+                                    className={`relative shrink-0 snap-start overflow-hidden border border-border/40 ${radClass} ${isNatural ? "h-50 w-auto aspect-auto" : "h-50 w-75"}`}
+                                  >
+                                    {img.url.endsWith(".mp4") ? (
+                                      <video src={img.url} autoPlay muted loop className={`h-full ${isNatural ? "w-auto object-contain" : "w-full object-cover"}`} />
+                                    ) : (
+                                      <img src={img.url} alt="Gallery item" className={`h-full ${isNatural ? "w-auto object-contain" : "w-full object-cover"}`} />
+                                    )}
+                                  </div>
+                                );
+                              })}
+                              {(sec.props?.images || []).length === 0 && (
+                                <div className="w-full border border-dashed border-border/60 py-6 text-center text-muted-foreground/60 text-xs font-mono">
+                                  Empty Gallery Block
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className={`grid grid-cols-2 ${sec.props?.gapSize === "none" ? "gap-0" : sec.props?.gapSize === "sm" ? "gap-2" : sec.props?.gapSize === "lg" ? "gap-8" : "gap-4"}`}>
+                            {(sec.props?.images || []).map((img: any, imgIdx: number) => {
+                              const radiusMap = { none: "rounded-none", sm: "rounded-md", md: "rounded-lg", lg: "rounded-xl", full: "rounded-2xl" };
+                              const radClass = radiusMap[sec.props?.radius as keyof typeof radiusMap] || radiusMap.md;
+                              const isNatural = sec.props?.fitMode === "natural";
+                              const aspectClass = isNatural ? "h-auto" : "aspect-video";
+                              const fitClass = isNatural ? "w-full h-auto object-contain" : "w-full h-full object-cover";
+                              
+                              return (
+                                <div 
+                                  key={imgIdx} 
+                                  className={`relative ${aspectClass} overflow-hidden border border-border/40 ${radClass} ${sec.props?.fullBleed ? "col-span-2 aspect-auto h-62.5" : "col-span-1"}`}
+                                >
+                                  {img.url.endsWith(".mp4") ? (
+                                    <video src={img.url} autoPlay muted loop className={fitClass} />
+                                  ) : (
+                                    <img src={img.url} alt="Gallery item" className={fitClass} />
+                                  )}
+                                </div>
+                              );
+                            })}
+                            {(sec.props?.images || []).length === 0 && (
+                              <div className="col-span-2 border border-dashed border-border/60 py-6 text-center text-muted-foreground/60 text-xs font-mono">
+                                Empty Gallery Block
+                              </div>
+                            )}
+                          </div>
+                        )
+                     ) : (
+                       <div className="font-mono text-xs text-muted-foreground bg-muted/20 p-4 rounded-xl">
+                         Preview not supported for component: {sec.componentKey}
+                       </div>
+                     )}
+                   </div>
+                 </div>
+               ))}
+             </div>
+           </div>
+         </div>
+       )}
+
+        {/* Custom Confirmation Alert Dialog Modal */}
+        <Dialog 
+          open={confirmDialog.isOpen} 
+          onOpenChange={(open) => setConfirmDialog(prev => ({ ...prev, isOpen: open }))}
+        >
+          <DialogContent className="max-w-md bg-background border border-border/40 rounded-2xl p-6 font-sans">
+            <DialogHeader>
+              <DialogTitle className="font-serif text-lg font-normal text-foreground">
+                {confirmDialog.title}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="py-4 text-sm text-muted-foreground leading-relaxed">
+              {confirmDialog.description}
+            </div>
+            <DialogFooter className="flex gap-3 sm:justify-end pt-2">
+              <Button
+                variant="ghost"
+                onClick={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+                className="border border-border text-muted-foreground hover:text-foreground rounded-full px-5 py-2 font-mono text-xs uppercase tracking-wider"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  if (pendingAction) pendingAction();
+                  setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                }}
+                className="bg-rose-950 hover:bg-rose-900 border border-rose-800 text-rose-300 rounded-full px-5 py-2 font-mono text-xs uppercase tracking-wider shadow-md"
+              >
+                {confirmDialog.actionLabel}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    );
+  }

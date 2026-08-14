@@ -45,6 +45,9 @@ export function TiptapEditor({ content, onChange, onImageUploadClick }: TiptapEd
         heading: {
           levels: [3, 4, 5, 6],
         },
+        // Disable built-ins we configure separately below to avoid duplicate extension warnings
+        link: false,
+        underline: false,
       }),
       Underline,
       CodeBlockLowlight.configure({

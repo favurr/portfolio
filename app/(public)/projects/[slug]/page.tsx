@@ -15,8 +15,8 @@ export async function generateMetadata({ params }: ProjectPageProps) {
   const { slug } = await params;
   const project = await projectDal.getProjectBySlug(slug);
 
-  // Block draft and archived status states
-  if (!project || project.status === "draft" || project.status === "archived") {
+  // Block archived projects from public view
+  if (!project || project.status === "archived") {
     return { title: "Project Not Found | Favurr" };
   }
 
@@ -30,8 +30,8 @@ export default async function ProjectDetailPage({ params }: ProjectPageProps) {
   const { slug } = await params;
   const project = await projectDal.getProjectBySlug(slug);
 
-  // Block draft and archived status states
-  if (!project || project.status === "draft" || project.status === "archived") {
+  // Block archived projects from public view
+  if (!project || project.status === "archived") {
     notFound();
   }
 

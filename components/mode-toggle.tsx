@@ -96,7 +96,7 @@ export function ModeToggle() {
     <button
       ref={buttonRef}
       onClick={toggleTheme}
-      className="relative rounded-full text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
+      className="relative rounded-full text-foreground hover:text-foreground cursor-pointer transition-colors"
       aria-label="Toggle Theme"
     >
       {currentTheme === "dark" ? (

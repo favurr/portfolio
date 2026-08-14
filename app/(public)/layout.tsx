@@ -4,6 +4,7 @@ import { LayoutAnimations } from "./components/LayoutAnimations";
 import { Navbar } from "@/components/layout/Navbar";
 import { Footer } from "@/components/layout/Footer";
 import { PublicShell } from "@/components/public-shell";
+import { ChatWidget } from "@/components/chat/ChatWidget";
 
 export default async function PublicLayout({
   children,
@@ -20,6 +21,7 @@ export default async function PublicLayout({
         <Navbar session={session?.session || null} />
         {/* Main Content Area */}
         <main className="flex-1">{children}</main>
+        <ChatWidget />
         <Footer />
       </LayoutAnimations>
     </PublicShell>

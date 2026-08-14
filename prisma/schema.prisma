@@ -203,23 +203,27 @@ model BlogPost {
 }
 
 model ChatSession {
-  id        String        @id @default(uuid())
-  name      String?
-  email     String?
-  messages  ChatMessage[]
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
+  id         String        @id @default(uuid())
+  name       String?
+  email      String?
+  isAiActive Boolean       @default(true)
+  messages   ChatMessage[]
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
 
   @@map("chat_session")
 }
 
 model ChatMessage {
-  id        String      @id @default(uuid())
-  sessionId String
-  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  role      String
-  content   String
-  createdAt DateTime    @default(now())
+  id         String      @id @default(uuid())
+  sessionId  String
+  session    ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role       String
+  senderType String      @default("visitor") // "visitor" | "assistant" | "admin"
+  content    String
+  modelUsed  String?
+  latency    Int?
+  createdAt  DateTime    @default(now())
 
   @@index([sessionId])
   @@map("chat_message")

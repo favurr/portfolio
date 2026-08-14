@@ -101,6 +101,20 @@ export const projectService = {
     return result;
   },
 
+  // One round-trip: project meta + dirty sections in a single DB transaction
+  async batchSaveProject(
+    projectId: string,
+    projectData: any,
+    sections: Array<{ id: string; title?: string | null; subtitle?: string | null; content?: string | null; props?: any }>
+  ) {
+    const results = await projectDal.batchSaveProject(projectId, projectData, sections);
+    const project = results[0] as any;
+    revalidatePath(`/projects/${project.slug}`);
+    revalidatePath("/projects");
+    revalidatePath("/");
+    return project;
+  },
+
   async reorderSections(projectId: string, sectionIds: string[]) {
     const result = await projectDal.reorderSections(sectionIds);
     const project = await projectDal.getProjectById(projectId);
@@ -117,8 +131,8 @@ export const projectService = {
 };
 
 export const mediaService = {
-  async getMediaItems() {
-    return mediaDal.getMediaItems();
+  async getMediaItems(projectId?: string) {
+    return mediaDal.getMediaItems(projectId);
   },
 
   async registerMediaItem(data: {

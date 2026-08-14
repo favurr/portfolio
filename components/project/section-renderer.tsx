@@ -28,7 +28,11 @@ export function SectionRenderer({ sections }: SectionRendererProps) {
         const LazyComponent = dynamic(sectionRegistry[key] as any) as React.ComponentType<any>;
 
         return (
-          <section key={section.id} className="project-section-reveal border-t border-border/40 pt-16 md:pt-24">
+          <section
+            key={section.id}
+            className="project-section-reveal border-t border-border/40 pt-16 md:pt-24"
+            data-animation={section.props?.animation || "slide"}
+          >
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-start">
               {/* Left Section Index / Header Header */}
               <div className="lg:col-span-3 lg:sticky lg:top-28">

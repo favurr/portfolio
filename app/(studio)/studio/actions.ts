@@ -37,6 +37,15 @@ export async function updateProjectAction(id: string, payload: any) {
   return projectService.updateProject(id, payload);
 }
 
+export async function batchSaveProjectAction(
+  id: string,
+  metaPayload: any,
+  sections: Array<{ id: string; title?: string | null; subtitle?: string | null; content?: string | null; props?: any }>
+) {
+  await verifyAuth();
+  return projectService.batchSaveProject(id, metaPayload, sections);
+}
+
 export async function deleteProjectAction(id: string) {
   await verifyAuth();
   return projectService.deleteProject(id);

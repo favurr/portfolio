@@ -10,15 +10,17 @@ export function HomeAnimations({ children }: { children: React.ReactNode }) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    const prefersReduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
     const ctx = gsap.context(() => {
       // 1. Hero Entrance Timeline (triggers immediately on mount)
       if (containerRef.current?.querySelector(".hero-text")) {
         const tl = gsap.timeline({ defaults: { ease: "power4.out" } });
         tl.from(".hero-text", {
-          y: 40,
+          y: prefersReduced ? 0 : 40,
           opacity: 0,
-          duration: 1.0,
-          stagger: 0.1,
+          duration: prefersReduced ? 0.3 : 1.0,
+          stagger: prefersReduced ? 0.05 : 0.1,
         });
       }
 
@@ -28,9 +30,9 @@ export function HomeAnimations({ children }: { children: React.ReactNode }) {
         const textElement = container.querySelector(".reveal-text");
         if (textElement) {
           gsap.from(textElement, {
-            y: 50,
+            y: prefersReduced ? 0 : 50,
             opacity: 0,
-            duration: 1,
+            duration: prefersReduced ? 0.3 : 1,
             ease: "power2.out",
             scrollTrigger: {
               trigger: container,
@@ -44,10 +46,10 @@ export function HomeAnimations({ children }: { children: React.ReactNode }) {
       // 3. Staggered reveal for Project Items in ProjectList
       if (containerRef.current?.querySelector(".group\\/item")) {
         gsap.from(".group\\/item", {
-          y: 30,
+          y: prefersReduced ? 0 : 30,
           opacity: 0,
-          duration: 0.8,
-          stagger: 0.08,
+          duration: prefersReduced ? 0.3 : 0.8,
+          stagger: prefersReduced ? 0.04 : 0.08,
           ease: "power2.out",
           scrollTrigger: {
             trigger: ".projects-section",
@@ -60,10 +62,10 @@ export function HomeAnimations({ children }: { children: React.ReactNode }) {
       // 4. Staggered reveal for Experience Items
       if (containerRef.current?.querySelector(".exp-item")) {
         gsap.from(".exp-item", {
-          x: -20,
+          x: prefersReduced ? 0 : -20,
           opacity: 0,
-          duration: 0.8,
-          stagger: 0.15,
+          duration: prefersReduced ? 0.3 : 0.8,
+          stagger: prefersReduced ? 0.05 : 0.15,
           ease: "power2.out",
           scrollTrigger: {
             trigger: ".experience-section",

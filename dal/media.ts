@@ -1,8 +1,17 @@
 import prisma from "@/lib/prisma";
 
 export const mediaDal = {
-  async getMediaItems() {
+  async getMediaItems(projectId?: string) {
     return prisma.media.findMany({
+      where: projectId ? { projectId } : undefined,
+      include: {
+        project: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
+      },
       orderBy: { createdAt: "desc" },
     });
   },
