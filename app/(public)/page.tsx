@@ -41,7 +41,7 @@ export default async function Home() {
 
         <div className="mx-auto w-full max-w-6xl my-auto grid grid-cols-1 lg:grid-cols-12 gap-12 items-center relative z-10">
           {/* Left Side: Content */}
-          <div className="max-w-4xl absolute top-[-50] left-[-90] text-left lg:col-span-8">
+          <div className="max-w-4xl absolute top-[-50] md:left-[-90] text-left lg:col-span-8">
             {/* Top badges / meta tags */}
             <div className="hero-text flex items-center gap-3 font-mono text-xs uppercase tracking-widest text-foreground mb-8">
               <span>Fullstack &amp; Frontend Engineer</span>

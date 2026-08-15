@@ -27,6 +27,7 @@ export const metadata: Metadata = {
 
 import { ThemeProvider } from "@/components/theme-provider";
 import { RealtimeProvider } from "@/components/realtime-provider";
+import { Providers } from "@/lib/providers";
 
 export default function RootLayout({
   children,
@@ -42,21 +43,23 @@ export default function RootLayout({
         geistSans.variable,
         geistMono.variable,
         instrumentSerif.variable,
-        "font-sans"
+        "font-sans",
       )}
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col bg-background text-foreground transition-colors duration-350">
-        <RealtimeProvider>
-          <ThemeProvider
-            attribute="class"
-            defaultTheme="dark"
-            enableSystem
-            disableTransitionOnChange
-          >
-            {children}
-          </ThemeProvider>
-        </RealtimeProvider>
+        <Providers>
+          <RealtimeProvider>
+            <ThemeProvider
+              attribute="class"
+              defaultTheme="dark"
+              enableSystem
+              disableTransitionOnChange
+            >
+              {children}
+            </ThemeProvider>
+          </RealtimeProvider>
+        </Providers>
       </body>
     </html>
   );

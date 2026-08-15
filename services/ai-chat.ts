@@ -197,6 +197,7 @@ export async function processAiResponse(
     const systemPrompt = `You are a helpful AI assistant on the portfolio website (Favurr). Your name is Orion.
 You represent Favurr, a Design Engineer, and Fullstack Developer based in Lagos, Nigeria.
 Be conversational, helpful, and professional. Keep your responses concise and friendly.
+Always write and format your responses in clean Markdown (use headers, bold text, bullet points, or paragraphs). Break up long blocks of text into separate, readable paragraphs with clear margins.
 Answer questions about Favurr's work, experience, background, availability, and skills.
 
 Here is some context loaded from Favurr's database matching the visitor's query:${contextBlock || "\n(No direct matches found. Answer generally based on what you know or ask the user to clarify.)"}
@@ -224,14 +225,25 @@ CRITICAL CAPABILITIES:
     console.log(`[AI-CHAT] Resolving response textStream...`);
     let fullResponse = "";
     let chunkCount = 0;
+    let buffer = "";
 
     for await (const chunk of result.textStream) {
       fullResponse += chunk;
+      buffer += chunk;
       chunkCount++;
       if (chunkCount === 1) {
         console.log(`[AI-CHAT] First token chunk received: "${chunk.trim()}"`);
       }
-      await channel.emit("token", { text: chunk });
+      
+      // Emit if buffer is moderately long or contains whitespace/newline to keep streaming natural and fast
+      if (buffer.length >= 24 || chunk.includes("\n") || chunk.includes(" ")) {
+        await channel.emit("token", { text: buffer });
+        buffer = "";
+      }
+    }
+
+    if (buffer) {
+      await channel.emit("token", { text: buffer });
     }
 
     const latency = Date.now() - startTime;

@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { MessageCircle, Trash2, User, Send, Loader2, Sparkles, AlertCircle, Wifi, ArrowLeft } from "lucide-react";
+import { MessageCircle, Trash2, User, Send, Loader2, Sparkles, AlertCircle, Wifi, ArrowLeft, Clock, Check, CheckCheck } from "lucide-react";
 import { useRealtime } from "@/lib/realtime-client";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { client } from "@/lib/client";
 import { cn } from "@/lib/utils";
 import {
   MessageGroup,
@@ -25,36 +27,103 @@ interface ChatSession {
   isAiActive: boolean;
   createdAt: string;
   updatedAt: string;
-  messages: { id: string; role: string; senderType: string; content: string; createdAt: string }[];
+  messages: { id: string; role: string; senderType: string; content: string; createdAt: string; status?: string }[];
   _count: { messages: number };
 }
 
+function formatTime(dateStr: string) {
+  try {
+    const d = new Date(dateStr);
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+
 export default function ChatsPage() {
+  const queryClient = useQueryClient();
   const [sessions, setSessions] = useState<ChatSession[]>([]);
-  const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
   const [thread, setThread] = useState<ChatSession | null>(null);
   const [input, setInput] = useState("");
-  const [isSending, setIsSending] = useState(false);
 
   // Realtime takeover states
   const [realtimeConnected, setRealtimeConnected] = useState(true);
-  const [visitorOnline, setVisitorOnline] = useState(true); // default to true, since presence is not tracked in upstash realtime
+  const [visitorOnline, setVisitorOnline] = useState(false); // Default to offline on mount
   const [visitorTyping, setVisitorTyping] = useState(false);
   const [typingTimeout, setTypingTimeout] = useState<NodeJS.Timeout | null>(null);
+  const [lastActiveTime, setLastActiveTime] = useState<number>(0);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const typingSentRef = useRef(false);
+  const presenceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // TanStack Query: Fetch all sessions
+  const { data: sessionsData, isLoading: isSessionsLoading } = useQuery({
+    queryKey: ["chatSessions"],
+    queryFn: async () => {
+      const res = await client.chats.get();
+      if (res.error) throw new Error("Failed to fetch sessions");
+      return res.data as unknown as ChatSession[];
+    },
+  });
 
   useEffect(() => {
-    fetchSessions();
-  }, []);
+    if (sessionsData) {
+      setSessions(sessionsData);
+    }
+  }, [sessionsData]);
+
+  // TanStack Query: Fetch active session details
+  const { data: threadData } = useQuery({
+    queryKey: ["chatSessionDetails", selected],
+    queryFn: async () => {
+      if (!selected) return null;
+      const res = await client.chats({ id: selected }).get();
+      if (res.error) throw new Error("Failed to fetch session details");
+      return res.data as unknown as ChatSession;
+    },
+    enabled: !!selected,
+  });
+
+  useEffect(() => {
+    if (threadData) {
+      setThread(threadData);
+    }
+  }, [threadData]);
+
+  // Initialize lastActiveTime from visitor's last message time
+  useEffect(() => {
+    if (thread) {
+      const visitorMessages = thread.messages.filter(
+        (m: any) => m.role === "user" || m.senderType === "visitor"
+      );
+      if (visitorMessages.length > 0) {
+        const lastMsg = visitorMessages[visitorMessages.length - 1];
+        setLastActiveTime(new Date(lastMsg.createdAt).getTime());
+      } else {
+        setLastActiveTime(new Date(thread.createdAt).getTime());
+      }
+    }
+  }, [thread?.id]);
 
   // Subscribe to real-time updates via Upstash Realtime client hooks
   useRealtime({
     channels: selected ? ["conversations:lobby", `conversations:${selected}`] : ["conversations:lobby"],
     events: ["new-session", "message-update", "typing", "message"],
     onData({ event, data, channel }) {
+      // Mark visitor online on any event received from their channel
+      if (selected && channel === `conversations:${selected}`) {
+        setVisitorOnline(true);
+        setLastActiveTime(Date.now());
+        if (presenceTimeoutRef.current) clearTimeout(presenceTimeoutRef.current);
+        presenceTimeoutRef.current = setTimeout(() => {
+          setVisitorOnline(false);
+        }, 60000); // 60s of inactivity marks offline
+      }
+
       if (event === "new-session") {
+        queryClient.invalidateQueries({ queryKey: ["chatSessions"] });
         setSessions((prev) => {
           if (prev.some((s) => s.id === data.id)) return prev;
           const newSess: ChatSession = {
@@ -71,6 +140,10 @@ export default function ChatsPage() {
         });
       } else if (event === "message-update") {
         const { sessionId, message } = data;
+        queryClient.invalidateQueries({ queryKey: ["chatSessions"] });
+        if (selected === sessionId) {
+          queryClient.invalidateQueries({ queryKey: ["chatSessionDetails", selected] });
+        }
         const formattedMsg = {
           id: message.id || `temp-${Date.now()}`,
           role: message.role,
@@ -79,7 +152,6 @@ export default function ChatsPage() {
           createdAt: message.createdAt || new Date().toISOString(),
         };
         
-        // Update the sidebar sessions preview in real-time
         setSessions((prev) => {
           const target = prev.find((s) => s.id === sessionId);
           if (!target) return prev; 
@@ -87,7 +159,7 @@ export default function ChatsPage() {
           const updated = {
             ...target,
             updatedAt: formattedMsg.createdAt,
-            messages: [formattedMsg], // Update last message preview
+            messages: [formattedMsg],
             _count: {
               messages: target._count.messages + 1
             }
@@ -97,10 +169,22 @@ export default function ChatsPage() {
           return [updated, ...filtered];
         });
 
-        // Update the currently selected thread view if matched
         setThread((prevThread) => {
           if (!prevThread || prevThread.id !== sessionId) return prevThread;
-          if (prevThread.messages.some((m) => m.id === formattedMsg.id)) return prevThread;
+          const exists = prevThread.messages.some((m) =>
+            m.id === formattedMsg.id ||
+            (m.content === formattedMsg.content && m.id.startsWith("temp-admin-"))
+          );
+          if (exists) {
+            return {
+              ...prevThread,
+              messages: prevThread.messages.map((m) =>
+                (m.id === formattedMsg.id || (m.content === formattedMsg.content && m.id.startsWith("temp-admin-")))
+                  ? { ...formattedMsg, status: undefined }
+                  : m
+              )
+            };
+          }
           return {
             ...prevThread,
             messages: [...prevThread.messages, formattedMsg]
@@ -111,6 +195,8 @@ export default function ChatsPage() {
           setVisitorTyping(data.isTyping);
         }
       } else if (event === "message" && channel === `conversations:${selected}`) {
+        queryClient.invalidateQueries({ queryKey: ["chatSessions"] });
+        queryClient.invalidateQueries({ queryKey: ["chatSessionDetails", selected] });
         const formattedMsg = {
           id: data.id || `temp-${Date.now()}`,
           role: data.role,
@@ -118,10 +204,22 @@ export default function ChatsPage() {
           content: data.content,
           createdAt: data.createdAt || new Date().toISOString(),
         };
-        // If we receive a message in the selected channel, append it to thread if not already there
         setThread((prevThread) => {
           if (!prevThread || prevThread.id !== selected) return prevThread;
-          if (prevThread.messages.some((m) => m.id === formattedMsg.id)) return prevThread;
+          const exists = prevThread.messages.some((m) =>
+            m.id === formattedMsg.id ||
+            (m.content === formattedMsg.content && m.id.startsWith("temp-admin-"))
+          );
+          if (exists) {
+            return {
+              ...prevThread,
+              messages: prevThread.messages.map((m) =>
+                (m.id === formattedMsg.id || (m.content === formattedMsg.content && m.id.startsWith("temp-admin-")))
+                  ? { ...formattedMsg, status: undefined }
+                  : m
+              )
+            };
+          }
           return {
             ...prevThread,
             messages: [...prevThread.messages, formattedMsg]
@@ -137,68 +235,79 @@ export default function ChatsPage() {
     }
   }, [thread?.messages, visitorTyping]);
 
-  async function fetchSessions() {
-    try {
-      const res = await fetch("/api/chats");
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          setSessions(data);
-          setLoading(false);
-          return;
-        }
+  // TanStack mutations for takeover, typing, reply, and deletion
+  const toggleAiMutation = useMutation({
+    mutationFn: async ({ id, isAiActive }: { id: string; isAiActive: boolean }) => {
+      const res = await client.chats({ id }).put({ isAiActive });
+      if (res.error) throw new Error("Failed to toggle AI mode");
+      return res.data;
+    },
+    onSuccess: (data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["chatSessions"] });
+      if (selected === variables.id) {
+        queryClient.invalidateQueries({ queryKey: ["chatSessionDetails", selected] });
       }
-    } catch (e) {
-      console.error(e);
-    }
-    setSessions([]);
-    setLoading(false);
-  }
+    },
+  });
+
+  const typingMutation = useMutation({
+    mutationFn: async ({ sessionId, isTyping, clientId }: { sessionId: string; isTyping: boolean; clientId?: string }) => {
+      await client.chat.typing.post({ sessionId, isTyping, clientId });
+    },
+  });
+
+  const sendReplyMutation = useMutation({
+    mutationFn: async ({ id, message }: { id: string; message: string }) => {
+      const res = await client.chats({ id }).message.post({ message });
+      if (res.error) throw new Error("Failed to send reply");
+      return res.data;
+    },
+  });
+
+  const deleteSessionMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await client.chats({ id }).delete();
+      if (res.error) throw new Error("Failed to delete session");
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["chatSessions"] });
+    },
+  });
 
   async function selectSession(id: string) {
     setSelected(id);
-    const res = await fetch(`/api/chats/${id}`);
-    const data = await res.json();
-    setThread(data);
   }
 
   async function toggleAi(checked: boolean) {
     if (!thread) return;
-
     setThread((prev: any) => ({ ...prev, isAiActive: checked }));
     setSessions((prev) =>
       prev.map((s) => (s.id === thread.id ? { ...s, isAiActive: checked } : s))
     );
-
-    try {
-      await fetch(`/api/chats/${thread.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isAiActive: checked }),
-      });
-    } catch (e) {
-      console.error(e);
-    }
+    toggleAiMutation.mutate({ id: thread.id, isAiActive: checked });
   }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInput(e.target.value);
     if (!selected) return;
 
-    fetch("/api/chat/typing", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId: selected, isTyping: true, clientId: "admin" }),
-    }).catch(console.error);
+    if (!typingSentRef.current) {
+      typingSentRef.current = true;
+      typingMutation.mutate({ sessionId: selected, isTyping: true, clientId: "admin" });
+    }
 
     if (typingTimeout) clearTimeout(typingTimeout);
 
     const timeout = setTimeout(() => {
-      fetch("/api/chat/typing", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: selected, isTyping: false, clientId: "admin" }),
-      }).catch(console.error);
+      typingMutation.mutateAsync({ sessionId: selected, isTyping: false, clientId: "admin" })
+        .then(() => {
+          typingSentRef.current = false;
+        })
+        .catch((err) => {
+          console.error(err);
+          typingSentRef.current = false;
+        });
     }, 2000);
 
     setTypingTimeout(timeout);
@@ -206,44 +315,78 @@ export default function ChatsPage() {
 
   async function handleSendReply(e: React.FormEvent) {
     e.preventDefault();
-    if (!input.trim() || !thread || isSending) return;
+    if (!input.trim() || !thread) return;
 
     const replyMsg = input.trim();
     setInput("");
-    setIsSending(true);
+
+    // Create a temporary message in "sending" state immediately
+    const tempId = `temp-admin-${Date.now()}`;
+    const newMsg = {
+      id: tempId,
+      role: "assistant",
+      senderType: "admin",
+      content: replyMsg,
+      createdAt: new Date().toISOString(),
+      status: "sending",
+    };
+
+    setThread((prev: any) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        messages: [...prev.messages, newMsg],
+      };
+    });
 
     try {
-      const res = await fetch(`/api/chats/${thread.id}/message`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: replyMsg }),
+      const savedMsg = (await sendReplyMutation.mutateAsync({ id: thread.id, message: replyMsg })) as any;
+
+      // Update status of this message from "sending" to undefined so checkmarks default to double-checks
+      setThread((prev: any) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          messages: prev.messages.map((m: any) =>
+            m.id === tempId ? { ...savedMsg, status: undefined } : m
+          ),
+        };
       });
 
-      if (res.ok) {
-        const savedMsg = await res.json();
-        setThread((prev: any) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            messages: [...prev.messages, savedMsg],
-          };
-        });
-      }
+      // Update list preview
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === thread.id
+            ? {
+                ...s,
+                updatedAt: savedMsg.createdAt,
+                messages: [savedMsg],
+                _count: { messages: s._count.messages + 1 },
+              }
+            : s
+        )
+      );
     } catch (e) {
-      console.error(e);
-    } finally {
-      setIsSending(false);
+      console.error("Error sending reply:", e);
+      setThread((prev: any) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          messages: prev.messages.map((m: any) =>
+            m.id === tempId ? { ...m, status: "failed" } : m
+          ),
+        };
+      });
     }
   }
 
   async function handleDelete(id: string) {
     if (!confirm("Delete this chat session?")) return;
-    await fetch(`/api/chats/${id}`, { method: "DELETE" });
+    deleteSessionMutation.mutate(id);
     if (selected === id) {
       setSelected(null);
       setThread(null);
     }
-    fetchSessions();
   }
 
   return (
@@ -263,7 +406,7 @@ export default function ChatsPage() {
         </div>
       </div>
 
-      {loading ? (
+      {isSessionsLoading ? (
         <div className="text-muted-foreground font-mono text-xs animate-pulse">Loading live conversations...</div>
       ) : sessions.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border/40 p-16 text-center text-muted-foreground font-mono text-xs space-y-2">
@@ -359,11 +502,11 @@ export default function ChatsPage() {
                       <ArrowLeft className="w-4 h-4" />
                     </button>
 
-                    <span className={cn("w-2.5 h-2.5 rounded-full", visitorOnline ? "bg-emerald-500 animate-pulse" : "bg-muted-foreground")} />
+                    <span className={cn("w-2 h-2 rounded-full", visitorOnline ? "bg-emerald-500 animate-pulse" : "bg-muted-foreground")} />
                     <div>
-                      <p className="text-sm font-semibold text-foreground">{thread.name || "Anonymous Guest"}</p>
-                      <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
-                        {visitorOnline ? "Visitor active" : "Offline / Inactive"}
+                      <p className="text-sm font-semibold text-foreground leading-none">{thread.name || "Anonymous Guest"}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        {visitorOnline ? "Online" : "Last seen recently"}
                       </p>
                     </div>
                   </div>
@@ -422,7 +565,7 @@ export default function ChatsPage() {
                                         </BubbleContent>
                                       </Bubble>
                                     </ShadcnMessageContent>
-                                    <div className="flex items-center gap-2 px-1 text-[9px] font-mono text-muted-foreground uppercase tracking-widest">
+                                    <div className="flex items-center justify-end gap-1.5 px-1 mt-1 text-[9px] font-mono text-muted-foreground uppercase tracking-widest">
                                       <span>
                                         {isVisitor
                                           ? "Visitor"
@@ -430,6 +573,23 @@ export default function ChatsPage() {
                                           ? "Admin (You)"
                                           : `Gemini AI (${m.latency ? `${m.latency}ms` : "Live"})`}
                                       </span>
+                                      <span>•</span>
+                                      <span>{formatTime(m.createdAt)}</span>
+                                      {!isVisitor && (
+                                        <span className="inline-flex items-center">
+                                          {m.status === "sending" ? (
+                                            <Clock className="w-2.5 h-2.5 text-muted-foreground animate-pulse" />
+                                          ) : m.status === "failed" ? (
+                                            <AlertCircle className="w-2.5 h-2.5 text-destructive" />
+                                          ) : m.status === "sent" ? (
+                                            <Check className="w-2.5 h-2.5 text-muted-foreground" />
+                                          ) : (visitorOnline || new Date(m.createdAt).getTime() <= lastActiveTime) ? (
+                                            <CheckCheck className="w-2.5 h-2.5 text-emerald-400" />
+                                          ) : (
+                                            <CheckCheck className="w-2.5 h-2.5 text-muted-foreground/60" />
+                                          )}
+                                        </span>
+                                      )}
                                     </div>
                                   </div>
                                 </ShadcnMessage>
@@ -466,15 +626,15 @@ export default function ChatsPage() {
                       value={input}
                       onChange={handleInputChange}
                       placeholder={thread.isAiActive ? "Turn off AI mode to takeover..." : "Type reply message..."}
-                      disabled={thread.isAiActive || isSending}
+                      disabled={thread.isAiActive}
                       className="flex-1 px-4 py-3 rounded-xl border border-border/60 bg-background text-foreground text-xs focus:outline-none focus:border-border transition-colors disabled:opacity-50 placeholder:text-muted-foreground/50 font-sans"
                     />
                     <button
                       type="submit"
-                      disabled={thread.isAiActive || !input.trim() || isSending}
+                      disabled={thread.isAiActive || !input.trim()}
                       className="p-3 rounded-xl bg-foreground text-background hover:opacity-90 disabled:opacity-30 transition-opacity cursor-pointer shrink-0"
                     >
-                      {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                      <Send className="w-4 h-4" />
                     </button>
                   </form>
                 </div>

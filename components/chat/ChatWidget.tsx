@@ -35,6 +35,8 @@ import {
 } from "@/components/ui/message-scroller";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { Spinner } from "@/components/ui/spinner";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { client } from "@/lib/client";
 import { cn } from "@/lib/utils";
 
 interface Message {
@@ -79,6 +81,27 @@ function ChatMarkdown({ content }: { content: string }) {
   return (
     <ReactMarkdown
       components={{
+        p({ children }) {
+          return <p className="mb-2 last:mb-0 leading-relaxed text-sm font-sans">{children}</p>;
+        },
+        ul({ children }) {
+          return <ul className="list-disc pl-4 mb-2 space-y-1 text-sm font-sans">{children}</ul>;
+        },
+        ol({ children }) {
+          return <ol className="list-decimal pl-4 mb-2 space-y-1 text-sm font-sans">{children}</ol>;
+        },
+        li({ children }) {
+          return <li className="text-sm leading-relaxed">{children}</li>;
+        },
+        h1({ children }) {
+          return <h1 className="text-base font-bold mt-3 mb-1.5 font-sans">{children}</h1>;
+        },
+        h2({ children }) {
+          return <h2 className="text-sm font-semibold mt-2.5 mb-1 font-sans">{children}</h2>;
+        },
+        h3({ children }) {
+          return <h3 className="text-xs font-medium mt-2 mb-1 font-sans">{children}</h3>;
+        },
         pre({ children }) {
           let text = "";
           try {
@@ -169,21 +192,25 @@ function InlineClaimForm({
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
 
+  const submitMutation = useMutation({
+    mutationFn: async (payload: { sessionId: string; name: string; email: string; history: any }) => {
+      const res = await client.chat.message.post(payload);
+      if (res.error) throw new Error("Failed to submit details");
+      return res.data;
+    },
+    onSuccess: () => {
+      localStorage.setItem("favurr-chat-registered", "true");
+      setDone(true);
+      onSubmitted();
+    }
+  });
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !email.trim() || !sessionId) return;
     setSubmitting(true);
     try {
-      const res = await fetch("/api/chat/message", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId, name, email, history }),
-      });
-      if (res.ok) {
-        localStorage.setItem("favurr-chat-registered", "true");
-        setDone(true);
-        onSubmitted();
-      }
+      await submitMutation.mutateAsync({ sessionId, name, email, history });
     } catch (e) {
       console.error(e);
     } finally {
@@ -239,7 +266,25 @@ function InlineClaimForm({
 }
 
 export function ChatWidget() {
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
+
+  const sendMessageMutation = useMutation({
+    mutationFn: async (payload: {
+      sessionId: string;
+      message?: string;
+      name?: string;
+      email?: string;
+      history?: any;
+    }) => {
+      const res = await client.chat.message.post(payload);
+      if (res.error) throw new Error("Failed to send message");
+      return res.data;
+    },
+    onSuccess: () => {
+      localStorage.setItem("favurr-chat-registered", "true");
+    },
+  });
   const [isExpanded, setIsExpanded] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -265,46 +310,20 @@ export function ChatWidget() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const streamMessageRef = useRef<string>("");
+  const typingSentRef = useRef(false);
 
-  // Restore or initialize session from localStorage on mount
+  // Initialize sessionId from localStorage on mount
   useEffect(() => {
     let storedId = localStorage.getItem("favurr-chat-session");
-    const registered =
-      localStorage.getItem("favurr-chat-registered") === "true";
-
     if (!storedId) {
       storedId = crypto.randomUUID();
       localStorage.setItem("favurr-chat-session", storedId);
       localStorage.setItem("favurr-chat-registered", "false");
     }
-
     setSessionId(storedId);
 
-    if (registered) {
-      setLoading(true);
-      fetch(`/api/chat/${storedId}`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
-          if (data?.messages) {
-            setMessages(
-              data.messages.map((m: any) => ({
-                id: m.id,
-                role: m.role,
-                senderType:
-                  m.senderType || (m.role === "user" ? "visitor" : "assistant"),
-                content: m.content,
-                createdAt: m.createdAt,
-              })),
-            );
-          }
-          if (data?.name || data?.email) {
-            setInfoSubmitted(true);
-          }
-        })
-        .finally(() => {
-          setLoading(false);
-        });
-    } else {
+    const registered = localStorage.getItem("favurr-chat-registered") === "true";
+    if (!registered) {
       const savedMessages = localStorage.getItem("favurr-chat-messages");
       if (savedMessages) {
         try {
@@ -316,11 +335,42 @@ export function ChatWidget() {
     }
   }, []);
 
+  const isRegistered = typeof window !== "undefined" && localStorage.getItem("favurr-chat-registered") === "true";
+
+  // Fetch registered session data using React Query
+  const { data: chatData } = useQuery({
+    queryKey: ["chatSession", sessionId],
+    queryFn: async () => {
+      if (!sessionId) return null;
+      const res = await client.chat({ sessionId }).get();
+      if (res.error) throw new Error("Failed to fetch session");
+      return res.data;
+    },
+    enabled: !!sessionId && isRegistered,
+  });
+
+  // Sync React Query loaded data to local state
+  useEffect(() => {
+    if (chatData && !("error" in chatData) && chatData.messages) {
+      setMessages(
+        chatData.messages.map((m: any) => ({
+          id: m.id,
+          role: m.role,
+          senderType: m.senderType || (m.role === "user" ? "visitor" : "assistant"),
+          content: m.content,
+          createdAt: m.createdAt,
+        }))
+      );
+      if (chatData.name || chatData.email) {
+        setInfoSubmitted(true);
+      }
+    }
+  }, [chatData]);
+
   // Save messages in-memory cache to localStorage
   useEffect(() => {
     if (sessionId) {
-      const registered =
-        localStorage.getItem("favurr-chat-registered") === "true";
+      const registered = localStorage.getItem("favurr-chat-registered") === "true";
       if (!registered && messages.length > 0) {
         localStorage.setItem("favurr-chat-messages", JSON.stringify(messages));
       }
@@ -365,24 +415,23 @@ export function ChatWidget() {
 
         const registered =
           localStorage.getItem("favurr-chat-registered") === "true";
-        if (registered) {
-          fetch(`/api/chat/${sessionId}`)
-            .then((r) => (r.ok ? r.json() : null))
-            .then((data) => {
-              if (data?.messages) {
-                setMessages(
-                  data.messages.map((m: any) => ({
-                    id: m.id,
-                    role: m.role,
-                    senderType:
-                      m.senderType ||
-                      (m.role === "user" ? "visitor" : "assistant"),
-                    content: m.content,
-                    createdAt: m.createdAt,
-                  })),
-                );
+        if (registered && sessionId) {
+          queryClient.invalidateQueries({ queryKey: ["chatSession", sessionId] });
+        } else {
+          // Unregistered visitor: assign a temporary ID to the completed AI response so it stays persistent
+          setMessages((prev) => {
+            const copy = [...prev];
+            for (let i = copy.length - 1; i >= 0; i--) {
+              if (copy[i].role === "assistant" && !copy[i].id) {
+                copy[i] = {
+                  ...copy[i],
+                  id: `ai-done-${Date.now()}`,
+                };
+                break;
               }
-            });
+            }
+            return copy;
+          });
         }
         setLoading(false);
       } else if (event === "message") {
@@ -447,12 +496,15 @@ export function ChatWidget() {
     setInput(e.target.value);
     if (!sessionId) return;
 
-    // Call secure typing route
-    fetch("/api/chat/typing", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId, isTyping: true, clientId: sessionId }),
-    }).catch(console.error);
+    // Only send typing:true once when starting to type
+    if (!typingSentRef.current) {
+      typingSentRef.current = true;
+      fetch("/api/chat/typing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, isTyping: true, clientId: sessionId }),
+      }).catch(console.error);
+    }
 
     if (typingTimeout) clearTimeout(typingTimeout);
 
@@ -461,7 +513,12 @@ export function ChatWidget() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId, isTyping: false, clientId: sessionId }),
-      }).catch(console.error);
+      }).then(() => {
+        typingSentRef.current = false;
+      }).catch((err) => {
+        console.error(err);
+        typingSentRef.current = false;
+      });
     }, 2000);
 
     setTypingTimeout(timeout);
@@ -496,22 +553,15 @@ export function ChatWidget() {
     }, 15000);
 
     try {
-      const res = await fetch("/api/chat/message", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId,
-          message: userMsg,
-          history: isRegistered ? undefined : updatedMessages,
-        }),
+      const data = await sendMessageMutation.mutateAsync({
+        sessionId: sessionId!,
+        message: userMsg,
+        history: isRegistered ? undefined : updatedMessages,
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.isAiActive === false) {
-          clearTimeout(safetyTimeout);
-          setLoading(false);
-          setAiStatus("idle");
-        }
+      if (data && data.isAiActive === false) {
+        clearTimeout(safetyTimeout);
+        setLoading(false);
+        setAiStatus("idle");
       }
     } catch {
       clearTimeout(safetyTimeout);
@@ -642,14 +692,15 @@ export function ChatWidget() {
 
                         return (
                           <MessageScrollerItem key={i}>
-                            <ShadcnMessage align={isVisitor ? "end" : "start"}>
-                              <ShadcnMessageContent>
+                            <ShadcnMessage align={isVisitor ? "end" : "start"} className={cn("max-w-[80%] my-0.5", isVisitor ? "ml-auto" : "mr-auto")}>
+                              <ShadcnMessageContent className="w-full">
                                 <Bubble
                                   variant={isVisitor ? "default" : "ghost"}
                                   align={isVisitor ? "end" : "start"}
                                   className={cn(
+                                    isVisitor && "w-full",
                                     !isVisitor &&
-                                      "bg-transparent border-none shadow-none p-0 max-w-[90%]",
+                                      "bg-transparent border-none shadow-none p-0 max-w-[100%]",
                                   )}
                                 >
                                   <BubbleContent
@@ -694,7 +745,7 @@ export function ChatWidget() {
                         <MessageScrollerItem>
                           <ShadcnMessage align="start">
                             <ShadcnMessageContent>
-                              <Bubble variant="muted" align="start">
+                              <Bubble variant="ghost" align="start">
                                 <BubbleContent className="flex items-center gap-1.5 py-3">
                                   <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:0ms]" />
                                   <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:150ms]" />
@@ -747,10 +798,9 @@ export function ChatWidget() {
               <button
                 onClick={scrollToBottom}
                 type="button"
-                className="absolute bottom-4 right-4 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-foreground text-background text-[10px] font-mono uppercase tracking-wider shadow-lg hover:opacity-90 transition-opacity cursor-pointer border border-border/20"
+                className="absolute bottom-4 right-[50%] z-20 flex items-center gap-1.5 p-1 rounded-full bg-foreground text-background text-[10px] font-mono uppercase tracking-wider shadow-lg hover:opacity-90 transition-opacity cursor-pointer border border-border/20"
               >
-                <span>Scroll to bottom</span>
-                <ArrowDown className="w-3 h-3 animate-bounce" />
+                <ArrowDown size={20} />
               </button>
             )}
           </div>
