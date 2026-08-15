@@ -5,21 +5,15 @@ import { streamText } from "ai";
 import { chatDal } from "@/dal/chat";
 import { getAblyRest } from "@/lib/ably";
 import prisma from "@/lib/prisma";
+import { vectorIndex } from "@/lib/vector";
+import { SemanticCache } from "@upstash/semantic-cache";
 
-// Helper function to extract search keywords from a user message
-function extractKeywords(message: string): string[] {
-  const clean = message.toLowerCase().replace(/[^a-zA-Z0-9\s]/g, "");
-  const words = clean.split(/\s+/);
-  const stopWords = new Set([
-    "what", "is", "a", "the", "for", "of", "to", "in", "and", "or", "hub", "page",
-    "you", "he", "she", "they", "i", "we", "me", "us", "them", "how", "why", "where",
-    "can", "could", "should", "would", "do", "does", "did", "have", "has", "had",
-    "get", "got", "make", "made", "know", "tell", "show", "give", "find", "search",
-    "about", "with", "from", "on", "at", "by", "an", "this", "that", "these", "those"
-  ]);
-  
-  return words.filter(w => w.length > 1 && !stopWords.has(w));
-}
+const semanticCache = vectorIndex
+  ? new SemanticCache({
+      index: vectorIndex,
+      minProximity: 0.92,
+    })
+  : null;
 
 // Select the AI model dynamically based on environment keys
 function getActiveModel() {
@@ -85,61 +79,95 @@ export async function processAiResponse(sessionId: string) {
 
     console.log(`[AI-CHAT] Latest user message for RAG query: "${lastUserMessage}"`);
 
-    // 2. Perform server-side keyword RAG searches
-    const keywords = extractKeywords(lastUserMessage);
-    console.log(`[AI-CHAT] Extracted search keywords: ${JSON.stringify(keywords)}`);
+    // 1.5 Check semantic cache
+    if (semanticCache && lastUserMessage) {
+      try {
+        console.log(`[AI-CHAT] Checking Semantic Cache for query: "${lastUserMessage}"`);
+        const cachedResponse = await semanticCache.get(lastUserMessage);
+        if (cachedResponse && typeof cachedResponse === "string") {
+          console.log(`[AI-CHAT] Semantic Cache HIT! Response: "${cachedResponse}"`);
+          
+          // Stream the cached response token by token to client
+          const words = cachedResponse.split(" ");
+          for (const word of words) {
+            channel.publish("token", { text: word + " " });
+            await new Promise((resolve) => setTimeout(resolve, 30));
+          }
 
-    let matchedKnowledge: any[] = [];
-    let matchedProjects: any[] = [];
+          const parts = cachedResponse.split("[SPLIT]").map(p => p.trim()).filter(Boolean);
+          const lobbyChannel = ably.channels.get("conversations:lobby");
 
-    if (keywords.length > 0) {
-      // Query Knowledge Base Entries matching keywords
-      matchedKnowledge = await prisma.knowledgeEntry.findMany({
-        where: {
-          enabled: true,
-          OR: keywords.map(kw => ({
-            OR: [
-              { title: { contains: kw, mode: "insensitive" } },
-              { content: { contains: kw, mode: "insensitive" } }
-            ]
-          }))
-        },
-        take: 3
-      });
+          for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+            const savedMsg = await prisma.chatMessage.create({
+              data: {
+                sessionId,
+                role: "assistant",
+                senderType: "assistant",
+                content: part,
+                modelUsed: "semantic-cache",
+                latency: 0,
+              },
+            });
 
-      // Query Projects catalog matching keywords
-      matchedProjects = await prisma.project.findMany({
-        where: {
-          status: { not: "archived" },
-          OR: keywords.map(kw => ({
-            OR: [
-              { title: { contains: kw, mode: "insensitive" } },
-              { description: { contains: kw, mode: "insensitive" } },
-              { overview: { contains: kw, mode: "insensitive" } }
-            ]
-          }))
-        },
-        take: 3
-      });
+            await lobbyChannel.publish("message-update", {
+              sessionId,
+              message: {
+                id: savedMsg.id,
+                content: part,
+                role: "assistant",
+                senderType: "assistant",
+                createdAt: savedMsg.createdAt.toISOString(),
+              },
+            });
+          }
+
+          await channel.publish("done", {
+            sessionId,
+            partsCount: parts.length,
+          });
+          return;
+        }
+      } catch (cacheErr) {
+        console.error("[AI-CHAT] Semantic cache lookup failed:", cacheErr);
+      }
     }
 
-    console.log(`[AI-CHAT] RAG Matches: ${matchedKnowledge.length} knowledge items, ${matchedProjects.length} projects.`);
-
-    // 3. Compile injected context block
+    // 2. Perform semantic search using Upstash Vector if available
     let contextBlock = "";
-    
-    if (matchedKnowledge.length > 0) {
-      contextBlock += "\n\nRELEVANT FACTS ABOUT EMEKA:\n";
-      matchedKnowledge.forEach((item, idx) => {
-        contextBlock += `Fact #${idx + 1} (${item.title}): ${item.content}\n`;
-      });
-    }
 
-    if (matchedProjects.length > 0) {
-      contextBlock += "\n\nRELEVANT PROJECTS OF EMEKA:\n";
-      matchedProjects.forEach((proj, idx) => {
-        contextBlock += `Project #${idx + 1} (${proj.title}): ${proj.description} (Category: ${proj.category}, Year: ${proj.year})\n`;
-      });
+    if (vectorIndex && lastUserMessage) {
+      try {
+        console.log(`[AI-CHAT] Querying Upstash Vector for query: "${lastUserMessage}"`);
+        const results = await vectorIndex.query({
+          data: lastUserMessage,
+          topK: 6,
+          includeMetadata: true,
+        });
+
+        console.log(`[AI-CHAT] Upstash Vector matched ${results.length} results.`);
+        const knowledgeFacts: string[] = [];
+        const projectsFacts: string[] = [];
+
+        for (const match of results) {
+          const meta = match.metadata as any;
+          if (!meta) continue;
+          if (meta.type === "knowledge") {
+            knowledgeFacts.push(`Fact (${meta.title || "General"}): ${match.data}`);
+          } else if (meta.type === "project") {
+            projectsFacts.push(`Project (${meta.title || "Project"}): ${match.data}`);
+          }
+        }
+
+        if (knowledgeFacts.length > 0) {
+          contextBlock += "\n\nRELEVANT FACTS ABOUT EMEKA:\n" + knowledgeFacts.join("\n");
+        }
+        if (projectsFacts.length > 0) {
+          contextBlock += "\n\nRELEVANT PROJECTS OF EMEKA:\n" + projectsFacts.join("\n");
+        }
+      } catch (err) {
+        console.error("[AI-CHAT] Error querying Upstash Vector:", err);
+      }
     }
 
     // Define context-rich system prompt
@@ -188,6 +216,13 @@ CRITICAL CAPABILITIES:
 
     if (fullResponse.length === 0) {
       console.warn("[AI-CHAT] WARNING: Generated response is empty!");
+    } else if (semanticCache && lastUserMessage) {
+      try {
+        await semanticCache.set(lastUserMessage, fullResponse);
+        console.log("[AI-CHAT] Stored response in Semantic Cache.");
+      } catch (cacheErr) {
+        console.error("[AI-CHAT] Semantic Cache set failed:", cacheErr);
+      }
     }
 
     // 5. Save the finalized response to the local database, splitting by [SPLIT] if needed

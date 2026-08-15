@@ -34,6 +34,8 @@
     "@tiptap/pm": "^3.29.2",
     "@tiptap/react": "^3.29.2",
     "@tiptap/starter-kit": "^3.29.2",
+    "@upstash/semantic-cache": "^1.0.5",
+    "@upstash/vector": "^1.2.3",
     "ably": "^2.27.0",
     "ai": "^7.0.65",
     "better-auth": "^1.6.25",

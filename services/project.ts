@@ -2,6 +2,7 @@ import { projectDal } from "@/dal/project";
 import { mediaDal } from "@/dal/media";
 import { settingsDal } from "@/dal/settings";
 import { revalidatePath } from "next/cache";
+import { vectorSyncService } from "@/services/vector-sync";
 
 export const projectService = {
   async getProjects() {
@@ -20,6 +21,7 @@ export const projectService = {
     userId: string;
   }) {
     const project = await projectDal.createProject(data);
+    await vectorSyncService.syncProjectToVector(project);
     revalidatePath("/projects");
     revalidatePath("/");
     return project;
@@ -53,6 +55,11 @@ export const projectService = {
     }>
   ) {
     const project = await projectDal.updateProject(id, data);
+    if (project.status === "archived") {
+      await vectorSyncService.deleteProjectFromVector(project.id);
+    } else {
+      await vectorSyncService.syncProjectToVector(project);
+    }
     revalidatePath(`/projects/${project.slug}`);
     revalidatePath("/projects");
     revalidatePath("/");
@@ -62,6 +69,7 @@ export const projectService = {
   async deleteProject(id: string) {
     const project = await projectDal.getProjectById(id);
     const result = await projectDal.deleteProject(id);
+    await vectorSyncService.deleteProjectFromVector(id);
     if (project) {
       revalidatePath(`/projects/${project.slug}`);
     }
@@ -109,6 +117,11 @@ export const projectService = {
   ) {
     const results = await projectDal.batchSaveProject(projectId, projectData, sections);
     const project = results[0] as any;
+    if (project.status === "archived") {
+      await vectorSyncService.deleteProjectFromVector(project.id);
+    } else {
+      await vectorSyncService.syncProjectToVector(project);
+    }
     revalidatePath(`/projects/${project.slug}`);
     revalidatePath("/projects");
     revalidatePath("/");
