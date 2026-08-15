@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { chatDal } from "@/dal/chat";
 import prisma from "@/lib/prisma";
-
-import { getAblyRest } from "@/lib/ably";
+import { realtime } from "@/lib/realtime";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -35,16 +34,14 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       data: { isAiActive },
     });
 
-    // Publish takeover status to the Ably channel so the visitor's ChatWidget shows a notification
+    // Publish takeover status to the Upstash Realtime channel so the visitor's ChatWidget shows a notification
     try {
-      const ably = getAblyRest();
-      const channel = ably.channels.get(`conversations:${id}`);
-      await channel.publish("takeover", {
-        isAiActive,
+      const channel = realtime.channel(`conversations:${id}`);
+      await channel.emit("takeover", {
         text: isAiActive ? "AI Agent has resumed the conversation." : "Admin joined the conversation.",
       });
-    } catch (ablyError) {
-      console.error("Failed to publish Ably takeover notification:", ablyError);
+    } catch (realtimeError) {
+      console.error("Failed to publish Upstash Realtime takeover notification:", realtimeError);
     }
 
     return NextResponse.json(updated);

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
-import { getAblyRest } from "@/lib/ably";
+import { realtime } from "@/lib/realtime";
 import prisma from "@/lib/prisma";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -30,11 +30,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       },
     });
 
-    // 2. Broadcast message over Ably to the client
-    const ably = getAblyRest();
-    const channel = ably.channels.get(`conversations:${sessionId}`);
+    // 2. Broadcast message over Upstash Realtime to the client
+    const channel = realtime.channel(`conversations:${sessionId}`);
 
-    await channel.publish("message", {
+    await channel.emit("message", {
       id: adminMsg.id,
       content: adminMsg.content,
       role: "assistant",
@@ -43,8 +42,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
 
     // ALSO publish to the global lobby channel
-    const lobbyChannel = ably.channels.get("conversations:lobby");
-    await lobbyChannel.publish("message-update", {
+    await realtime.channel("conversations:lobby").emit("message-update", {
       sessionId,
       message: {
         id: adminMsg.id,

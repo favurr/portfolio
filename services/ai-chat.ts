@@ -3,7 +3,7 @@ import { openai, createOpenAI } from "@ai-sdk/openai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { streamText } from "ai";
 import { chatDal } from "@/dal/chat";
-import { getAblyRest } from "@/lib/ably";
+import { realtime } from "@/lib/realtime";
 import prisma from "@/lib/prisma";
 import { vectorIndex } from "@/lib/vector";
 import { SemanticCache } from "@upstash/semantic-cache";
@@ -51,70 +51,84 @@ function getActiveModel() {
   };
 }
 
-export async function processAiResponse(sessionId: string) {
-  console.log(`[AI-CHAT] Starting processAiResponse for session ID: ${sessionId}`);
-  const ably = getAblyRest();
-  const channel = ably.channels.get(`conversations:${sessionId}`);
+export async function processAiResponse(
+  sessionId: string,
+  inMemoryMessages?: { role: "user" | "assistant" | "admin" | "system"; senderType: "visitor" | "assistant" | "admin" | "system"; content: string }[]
+) {
+  console.log(`[AI-CHAT] Starting processAiResponse for session ID: ${sessionId} (inMemory = ${!!inMemoryMessages})`);
+  const channel = realtime.channel(`conversations:${sessionId}`);
 
   try {
-    // 1. Fetch conversation history from local database
-    const session = await chatDal.getSession(sessionId);
-    if (!session) {
-      console.warn(`[AI-CHAT] Session not found in database for ID: ${sessionId}`);
-      return;
+    let messages: { role: "user" | "assistant"; content: string }[] = [];
+    let lastUserMessage = "";
+    let isRegistered = true;
+
+    if (inMemoryMessages && Array.isArray(inMemoryMessages)) {
+      isRegistered = false;
+      messages = inMemoryMessages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        }));
+      lastUserMessage = [...inMemoryMessages]
+        .reverse()
+        .find((m) => m.role === "user" || m.senderType === "visitor")?.content || "";
+    } else {
+      // 1. Fetch conversation history from local database
+      const session = await chatDal.getSession(sessionId);
+      if (!session) {
+        console.warn(`[AI-CHAT] Session not found in database for ID: ${sessionId}`);
+        return;
+      }
+      messages = session.messages.map((m) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      }));
+      lastUserMessage = [...session.messages]
+        .reverse()
+        .find((m) => m.role === "user" || m.senderType === "visitor")?.content || "";
     }
-
-    console.log(`[AI-CHAT] Retrieved session with ${session.messages.length} messages. isAiActive = ${session.isAiActive}`);
-
-    // Map conversation messages
-    const messages = session.messages.map((m) => ({
-      role: m.role as "user" | "assistant",
-      content: m.content,
-    }));
-
-    // Get latest user message to perform RAG search
-    const lastUserMessage = [...session.messages]
-      .reverse()
-      .find((m) => m.role === "user" || m.senderType === "visitor")?.content || "";
 
     console.log(`[AI-CHAT] Latest user message for RAG query: "${lastUserMessage}"`);
 
     // 1.5 Check semantic cache
     if (semanticCache && lastUserMessage) {
       try {
+        await channel.emit("status", { text: "Scanning semantic cache..." });
         console.log(`[AI-CHAT] Checking Semantic Cache for query: "${lastUserMessage}"`);
         const cachedResponse = await semanticCache.get(lastUserMessage);
         if (cachedResponse && typeof cachedResponse === "string") {
           console.log(`[AI-CHAT] Semantic Cache HIT! Response: "${cachedResponse}"`);
           
-          // Stream the cached response token by token to client
+          // Stream the cached response chunk by chunk to client (3 words per chunk) to avoid out of order delivery
           const words = cachedResponse.split(" ");
-          for (const word of words) {
-            channel.publish("token", { text: word + " " });
-            await new Promise((resolve) => setTimeout(resolve, 30));
+          const chunks: string[] = [];
+          for (let i = 0; i < words.length; i += 3) {
+            chunks.push(words.slice(i, i + 3).join(" ") + " ");
+          }
+          for (const chunk of chunks) {
+            await channel.emit("token", { text: chunk });
+            await new Promise((resolve) => setTimeout(resolve, 50));
           }
 
-          const parts = cachedResponse.split("[SPLIT]").map(p => p.trim()).filter(Boolean);
-          const lobbyChannel = ably.channels.get("conversations:lobby");
-
-          for (let i = 0; i < parts.length; i++) {
-            const part = parts[i];
+          if (isRegistered) {
             const savedMsg = await prisma.chatMessage.create({
               data: {
                 sessionId,
                 role: "assistant",
                 senderType: "assistant",
-                content: part,
+                content: cachedResponse,
                 modelUsed: "semantic-cache",
                 latency: 0,
               },
             });
 
-            await lobbyChannel.publish("message-update", {
+            await realtime.channel("conversations:lobby").emit("message-update", {
               sessionId,
               message: {
                 id: savedMsg.id,
-                content: part,
+                content: cachedResponse,
                 role: "assistant",
                 senderType: "assistant",
                 createdAt: savedMsg.createdAt.toISOString(),
@@ -122,9 +136,8 @@ export async function processAiResponse(sessionId: string) {
             });
           }
 
-          await channel.publish("done", {
+          await channel.emit("done", {
             sessionId,
-            partsCount: parts.length,
           });
           return;
         }
@@ -138,6 +151,7 @@ export async function processAiResponse(sessionId: string) {
 
     if (vectorIndex && lastUserMessage) {
       try {
+        await channel.emit("status", { text: "Analyzing query & scanning catalog..." });
         console.log(`[AI-CHAT] Querying Upstash Vector for query: "${lastUserMessage}"`);
         const results = await vectorIndex.query({
           data: lastUserMessage,
@@ -160,35 +174,44 @@ export async function processAiResponse(sessionId: string) {
         }
 
         if (knowledgeFacts.length > 0) {
-          contextBlock += "\n\nRELEVANT FACTS ABOUT EMEKA:\n" + knowledgeFacts.join("\n");
+          contextBlock += "\n\nRELEVANT FACTS ABOUT FAVURR:\n" + knowledgeFacts.join("\n");
         }
         if (projectsFacts.length > 0) {
-          contextBlock += "\n\nRELEVANT PROJECTS OF EMEKA:\n" + projectsFacts.join("\n");
+          contextBlock += "\n\nRELEVANT PROJECTS OF FAVURR:\n" + projectsFacts.join("\n");
+        }
+
+        if (results.length > 0) {
+          await channel.emit("status", { text: `Found matches. Synthesizing response...` });
+        } else {
+          await channel.emit("status", { text: "Synthesizing answer..." });
         }
       } catch (err) {
         console.error("[AI-CHAT] Error querying Upstash Vector:", err);
+        await channel.emit("status", { text: "Synthesizing answer..." });
       }
+    } else {
+      await channel.emit("status", { text: "Synthesizing answer..." });
     }
 
     // Define context-rich system prompt
-    const systemPrompt = `You are a helpful AI assistant on Emeka's portfolio website (Favurr). 
-You represent Emeka, a Design Engineer, Photographer, and Frontend Developer based in Lagos, Nigeria.
+    const systemPrompt = `You are a helpful AI assistant on the portfolio website (Favurr). Your name is Orion.
+You represent Favurr, a Design Engineer, and Fullstack Developer based in Lagos, Nigeria.
 Be conversational, helpful, and professional. Keep your responses concise and friendly.
-Answer questions about Emeka's work, experience, background, availability, and skills.
+Answer questions about Favurr's work, experience, background, availability, and skills.
 
-Here is some context loaded from Emeka's database matching the visitor's query:${contextBlock || "\n(No direct matches found. Answer generally based on what you know or ask the user to clarify.)"}
+Here is some context loaded from Favurr's database matching the visitor's query:${contextBlock || "\n(No direct matches found. Answer generally based on what you know or ask the user to clarify.)"}
 
 Use this context to answer the user's question accurately. Cite projects or details from the context where appropriate.
-If the question is about something you don't know and is not in the context, suggest they leave their details by outputting "[CLAIM_FORM]" in your response so Emeka can follow up personally. Do not make up answers.
+If the question is about something you don't know and is not in the context, suggest they leave their details by outputting "[CLAIM_FORM]" in your response so Favurr can follow up personally. Do not make up answers.
 
 CRITICAL CAPABILITIES:
-1. **Details Form**: If the user wants to leave their details, wants you to tell Emeka to reach out, or says thank you/concludes a helpful chat, output the exact token "[CLAIM_FORM]" inline at the end of your response to show them the contact details capture form.
-2. **Multiple Messages**: If you want to send multiple separate messages (e.g. to break up points or sound more human), insert "[SPLIT]" on a new line between paragraphs. The system will separate them into multiple bubbles in real time.`;
+1. **Details Form**: If the user wants to leave their details, wants you to tell Favurr to reach out, or says thank you/concludes a helpful chat, output the exact token "[CLAIM_FORM]" inline at the end of your response to show them the contact details capture form.`;
 
     const activeModel = getActiveModel();
     console.log(`[AI-CHAT] Selected active model provider: ${activeModel.name}`);
 
     // 4. Stream AI response
+    await channel.emit("status", { text: "Generating response..." });
     const startTime = Date.now();
     console.log(`[AI-CHAT] Invoking streamText...`);
     
@@ -208,7 +231,7 @@ CRITICAL CAPABILITIES:
       if (chunkCount === 1) {
         console.log(`[AI-CHAT] First token chunk received: "${chunk.trim()}"`);
       }
-      channel.publish("token", { text: chunk });
+      await channel.emit("token", { text: chunk });
     }
 
     const latency = Date.now() - startTime;
@@ -225,30 +248,24 @@ CRITICAL CAPABILITIES:
       }
     }
 
-    // 5. Save the finalized response to the local database, splitting by [SPLIT] if needed
-    const parts = fullResponse.split("[SPLIT]").map(p => p.trim()).filter(Boolean);
-    const lobbyChannel = ably.channels.get("conversations:lobby");
-
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i];
+    if (isRegistered) {
+      // 5. Save the finalized response to the local database
       const savedMsg = await prisma.chatMessage.create({
         data: {
           sessionId,
           role: "assistant",
           senderType: "assistant",
-          content: part,
+          content: fullResponse,
           modelUsed: activeModel.name,
-          latency: Math.round(latency / parts.length),
+          latency,
         },
       });
-      console.log(`[AI-CHAT] AI message part ${i+1}/${parts.length} saved with ID: ${savedMsg.id}`);
 
-      // Publish new message update to the lobby
-      await lobbyChannel.publish("message-update", {
+      await realtime.channel("conversations:lobby").emit("message-update", {
         sessionId,
         message: {
           id: savedMsg.id,
-          content: part,
+          content: fullResponse,
           role: "assistant",
           senderType: "assistant",
           createdAt: savedMsg.createdAt.toISOString(),
@@ -257,13 +274,11 @@ CRITICAL CAPABILITIES:
     }
 
     // Send complete event with final signal
-    await channel.publish("done", {
+    await channel.emit("done", {
       sessionId,
-      partsCount: parts.length,
     });
     console.log(`[AI-CHAT] Real-time updates successfully broadcasted!`);
   } catch (error: any) {
     console.error("[AI-CHAT] ERROR in processAiResponse:", error);
-    await channel.publish("error", { message: error.message });
   }
 }

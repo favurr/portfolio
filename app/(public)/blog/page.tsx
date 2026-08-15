@@ -6,7 +6,7 @@ export const revalidate = 60; // Cache for 60 seconds
 
 export const metadata = {
   title: "Thoughts & Stories | Favurr",
-  description: "Read the latest essays, photography notes, design thoughts, and creative process writeups by Emeka.",
+  description: "Read the latest essays, photography notes, design thoughts, and creative process writeups on Favurr.",
 };
 
 export default async function BlogPage() {

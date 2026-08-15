@@ -86,7 +86,7 @@ export default async function Home() {
 
         <div className="mx-auto max-w-4xl text-center flex flex-col items-center justify-center">
           <blockquote className="font-serif text-3xl sm:text-5xl lg:text-6xl text-foreground font-light tracking-tight leading-tight max-w-[32ch] italic text-center">
-            "I'm Emeka Favour Ezeamaka &mdash; a full-stack design engineer
+            "I'm Favurr &mdash; a full-stack design engineer
             building fast, secure, and visually memorable web products."
           </blockquote>
           <div className="md:col-span-7 space-y-4">

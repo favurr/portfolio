@@ -21,7 +21,7 @@ export async function generateMetadata({ params }: PageProps) {
 
   return {
     title: `${post.title} | Favurr`,
-    description: post.excerpt || "Read this essay by Emeka.",
+    description: post.excerpt || "Read this essay on Favurr.",
   };
 }
 

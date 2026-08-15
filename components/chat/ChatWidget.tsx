@@ -1,8 +1,22 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { MessageCircle, X, Send, Loader2, Maximize2, Minimize2, Check, User, Mail, Sparkles, Wifi } from "lucide-react";
-import Ably from "ably";
+import {
+  MessageCircle,
+  X,
+  Send,
+  Loader2,
+  Maximize2,
+  Minimize2,
+  Check,
+  User,
+  Mail,
+  Sparkles,
+  Copy,
+  ArrowDown,
+} from "lucide-react";
+import { useRealtime } from "@/lib/realtime-client";
+import ReactMarkdown from "react-markdown";
 import {
   MessageGroup,
   Message as ShadcnMessage,
@@ -10,6 +24,8 @@ import {
   MessageHeader as ShadcnMessageHeader,
 } from "@/components/ui/message";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
+import { Textarea } from "@/components/ui/textarea";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   MessageScrollerProvider,
   MessageScroller,
@@ -29,8 +45,125 @@ interface Message {
   createdAt?: string;
 }
 
+// Copy Button Component for Codeblocks & Quotes
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy text:", err);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      type="button"
+      className="p-1 rounded bg-muted-foreground/10 hover:bg-muted-foreground/20 text-muted-foreground transition-colors cursor-pointer"
+      title="Copy to clipboard"
+    >
+      {copied ? (
+        <Check className="w-3 h-3 text-emerald-500" />
+      ) : (
+        <Copy className="w-3 h-3" />
+      )}
+    </button>
+  );
+}
+
+// Custom Markdown Component
+function ChatMarkdown({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      components={{
+        pre({ children }) {
+          let text = "";
+          try {
+            if (
+              children &&
+              (children as any).props &&
+              (children as any).props.children
+            ) {
+              text = String((children as any).props.children);
+            } else {
+              text = String(children);
+            }
+          } catch (e) {
+            text = String(children);
+          }
+          return (
+            <div className="relative group/code my-2 p-3 bg-muted/40 rounded-lg border border-border/40 font-mono text-xs overflow-x-auto">
+              <div className="absolute right-2 top-2 opacity-0 group-hover/code:opacity-100 transition-opacity z-10">
+                <CopyButton text={text} />
+              </div>
+              <pre className="pr-6 leading-relaxed whitespace-pre-wrap">
+                {children}
+              </pre>
+            </div>
+          );
+        },
+        code({ node, className, children, ...props }) {
+          return (
+            <code
+              className={cn(
+                "bg-muted/60 px-1.5 py-0.5 rounded font-mono text-xs text-foreground",
+                className,
+              )}
+              {...props}
+            >
+              {children}
+            </code>
+          );
+        },
+        blockquote({ children }) {
+          let text = "";
+          try {
+            text = String((children as any)?.[0]?.props?.children || children);
+          } catch {
+            text = String(children);
+          }
+          return (
+            <div className="relative group/quote my-2 pl-3 border-l-2 border-primary/40 italic text-muted-foreground bg-muted/20 py-1.5 pr-2 rounded-r-md">
+              <div className="absolute right-2 top-1 opacity-0 group-hover/quote:opacity-100 transition-opacity z-10">
+                <CopyButton text={text} />
+              </div>
+              <blockquote>{children}</blockquote>
+            </div>
+          );
+        },
+        a({ href, children }) {
+          const isEmail = href?.startsWith("mailto:");
+          return (
+            <a
+              href={href}
+              target={isEmail ? undefined : "_blank"}
+              rel={isEmail ? undefined : "noopener noreferrer"}
+              className="text-primary hover:underline font-medium break-all"
+            >
+              {children}
+            </a>
+          );
+        },
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  );
+}
+
 // Inline Claim Form Component
-function InlineClaimForm({ sessionId, onSubmitted }: { sessionId: string | null; onSubmitted: () => void }) {
+function InlineClaimForm({
+  sessionId,
+  history,
+  onSubmitted,
+}: {
+  sessionId: string | null;
+  history: Message[];
+  onSubmitted: () => void;
+}) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -44,9 +177,10 @@ function InlineClaimForm({ sessionId, onSubmitted }: { sessionId: string | null;
       const res = await fetch("/api/chat/message", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId, name, email }),
+        body: JSON.stringify({ sessionId, name, email, history }),
       });
       if (res.ok) {
+        localStorage.setItem("favurr-chat-registered", "true");
         setDone(true);
         onSubmitted();
       }
@@ -67,7 +201,10 @@ function InlineClaimForm({ sessionId, onSubmitted }: { sessionId: string | null;
   }
 
   return (
-    <form onSubmit={handleSubmit} className="mt-3 p-3 rounded-xl border border-border/40 bg-background/30 space-y-2.5">
+    <form
+      onSubmit={handleSubmit}
+      className="mt-3 p-3 rounded-xl border border-border/40 bg-background/30 space-y-2.5"
+    >
       <div className="relative">
         <User className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-muted-foreground" />
         <input
@@ -93,7 +230,7 @@ function InlineClaimForm({ sessionId, onSubmitted }: { sessionId: string | null;
       <button
         type="submit"
         disabled={submitting}
-        className="w-full font-mono text-[9px] uppercase tracking-wider py-1.5 rounded-lg bg-foreground text-background font-medium hover:bg-foreground/90 disabled:opacity-50 transition-opacity"
+        className="w-full font-mono text-[9px] uppercase tracking-wider py-1.5 rounded-lg bg-foreground text-background font-medium hover:bg-foreground/90 disabled:opacity-50 transition-opacity cursor-pointer"
       >
         {submitting ? "Saving..." : "Submit Details"}
       </button>
@@ -108,27 +245,44 @@ export function ChatWidget() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [isNetworkLoading, setIsNetworkLoading] = useState(false);
-  const [aiStatus, setAiStatus] = useState<"idle" | "searching" | "generating">("idle");
+  const [aiStatus, setAiStatus] = useState<"idle" | "searching" | "generating">(
+    "idle",
+  );
+  const [statusText, setStatusText] = useState(
+    "Scanning project catalog & experience logs...",
+  );
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [infoSubmitted, setInfoSubmitted] = useState(false);
+  const [showScrollBottomBtn, setShowScrollBottomBtn] = useState(false);
 
   // Realtime states
-  const [ablyClient, setAblyClient] = useState<Ably.Realtime | null>(null);
   const [isTyping, setIsTyping] = useState(false);
-  const [typingTimeout, setTypingTimeout] = useState<NodeJS.Timeout | null>(null);
-  const [adminOnline, setAdminOnline] = useState(false);
-  const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [typingTimeout, setTypingTimeout] = useState<NodeJS.Timeout | null>(
+    null,
+  );
+  const [realtimeConnected, setRealtimeConnected] = useState(true);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const streamMessageRef = useRef<string>("");
 
-  // Restore session from localStorage
+  // Restore or initialize session from localStorage on mount
   useEffect(() => {
-    const stored = localStorage.getItem("favurr-chat-session");
-    if (stored) {
-      setSessionId(stored);
-      fetch(`/api/chat/${stored}`)
+    let storedId = localStorage.getItem("favurr-chat-session");
+    const registered =
+      localStorage.getItem("favurr-chat-registered") === "true";
+
+    if (!storedId) {
+      storedId = crypto.randomUUID();
+      localStorage.setItem("favurr-chat-session", storedId);
+      localStorage.setItem("favurr-chat-registered", "false");
+    }
+
+    setSessionId(storedId);
+
+    if (registered) {
+      setLoading(true);
+      fetch(`/api/chat/${storedId}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((data) => {
           if (data?.messages) {
@@ -136,10 +290,11 @@ export function ChatWidget() {
               data.messages.map((m: any) => ({
                 id: m.id,
                 role: m.role,
-                senderType: m.senderType || (m.role === "user" ? "visitor" : "assistant"),
+                senderType:
+                  m.senderType || (m.role === "user" ? "visitor" : "assistant"),
                 content: m.content,
                 createdAt: m.createdAt,
-              }))
+              })),
             );
           }
           if (data?.name || data?.email) {
@@ -149,240 +304,190 @@ export function ChatWidget() {
         .finally(() => {
           setLoading(false);
         });
+    } else {
+      const savedMessages = localStorage.getItem("favurr-chat-messages");
+      if (savedMessages) {
+        try {
+          setMessages(JSON.parse(savedMessages));
+        } catch (e) {
+          console.error("Error parsing saved messages:", e);
+        }
+      }
     }
   }, []);
 
-  // Initialize Ably client and subscribe to channels
+  // Save messages in-memory cache to localStorage
   useEffect(() => {
-    if (!sessionId) return;
-
-    // Retry token fetch to handle Next.js dev server on-demand route compilation delays
-    const fetchTokenWithRetry = async (id: string, retries = 6, delay = 2000): Promise<any> => {
-      for (let i = 0; i < retries; i++) {
-        try {
-          const res = await fetch("/api/chat/token", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ sessionId: id }),
-          });
-          if (res.ok) {
-            return await res.json();
-          }
-        } catch (e) {
-          console.warn(`Ably token fetch attempt ${i + 1} failed. Retrying...`, e);
-        }
-        if (i < retries - 1) {
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
+    if (sessionId) {
+      const registered =
+        localStorage.getItem("favurr-chat-registered") === "true";
+      if (!registered && messages.length > 0) {
+        localStorage.setItem("favurr-chat-messages", JSON.stringify(messages));
       }
-      throw new Error("Failed to fetch Ably token after retries");
-    };
+    }
+  }, [messages, sessionId]);
 
-    const realtime = new Ably.Realtime({
-      authUrl: "/api/chat/token",
-      authMethod: "POST",
-      authParams: { sessionId },
-      authHeaders: { "Content-Type": "application/json" },
-      authCallback: async (tokenParams, callback) => {
-        try {
-          const tokenRequest = await fetchTokenWithRetry(sessionId);
-          callback(null, tokenRequest);
-        } catch (err: any) {
-          callback(err, null);
+  // Subscribe to real-time events via Upstash Realtime hook
+  useRealtime({
+    channels: sessionId ? [`conversations:${sessionId}`] : [],
+    events: ["status", "token", "done", "message", "takeover", "typing"],
+    onData({ event, data }) {
+      if (event === "status") {
+        setStatusText(data.text);
+        if (
+          data.text.includes("Generating") ||
+          data.text.includes("Synthesizing")
+        ) {
+          setAiStatus("generating");
+        } else {
+          setAiStatus("searching");
         }
-      },
-    });
+      } else if (event === "token") {
+        setLoading(false);
+        setAiStatus("generating");
+        const token = data.text;
+        streamMessageRef.current += token;
 
-    setAblyClient(realtime);
-
-    realtime.connection.on("connected", () => {
-      setRealtimeConnected(true);
-    });
-
-    realtime.connection.on("disconnected", () => {
-      setRealtimeConnected(false);
-    });
-
-    const channel = realtime.channels.get(`conversations:${sessionId}`);
-
-    // Subscribe to incoming realtime messages and AI streaming tokens
-    channel.subscribe("token", (msg) => {
-      setLoading(false);
-      setAiStatus("generating");
-      const token = msg.data.text;
-      streamMessageRef.current += token;
-
-      // Handle split streaming dynamically on the client
-      const parts = streamMessageRef.current.split("[SPLIT]");
-
-      setMessages((prev) => {
-        const baseMessages = prev.filter((m) => m.id || m.role !== "assistant");
-        const streamedMsgs = parts.map((part) => ({
-          role: "assistant" as const,
-          senderType: "assistant" as const,
-          content: part,
-        })).filter(p => p.content.length > 0 || parts.length === 1);
-
-        return [...baseMessages, ...streamedMsgs];
-      });
-    });
-
-    // Listen for AI completion event
-    channel.subscribe("done", (msg) => {
-      streamMessageRef.current = "";
-      setAiStatus("idle");
-      
-      // Fetch latest messages from database to guarantee perfect synchronization
-      fetch(`/api/chat/${sessionId}`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
-          if (data?.messages) {
-            setMessages(
-              data.messages.map((m: any) => ({
-                id: m.id,
-                role: m.role,
-                senderType: m.senderType || (m.role === "user" ? "visitor" : "assistant"),
-                content: m.content,
-                createdAt: m.createdAt,
-              }))
-            );
-          }
+        setMessages((prev) => {
+          const baseMessages = prev.filter((m) => m.id || m.role !== "assistant");
+          return [
+            ...baseMessages,
+            {
+              role: "assistant" as const,
+              senderType: "assistant" as const,
+              content: streamMessageRef.current,
+            },
+          ];
         });
-      setLoading(false);
-    });
+      } else if (event === "done") {
+        streamMessageRef.current = "";
+        setAiStatus("idle");
 
-    // Listen for manual takeover message events from Admin
-    channel.subscribe("message", (msg) => {
-      if (msg.data.senderType === "admin") {
+        const registered =
+          localStorage.getItem("favurr-chat-registered") === "true";
+        if (registered) {
+          fetch(`/api/chat/${sessionId}`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => {
+              if (data?.messages) {
+                setMessages(
+                  data.messages.map((m: any) => ({
+                    id: m.id,
+                    role: m.role,
+                    senderType:
+                      m.senderType ||
+                      (m.role === "user" ? "visitor" : "assistant"),
+                    content: m.content,
+                    createdAt: m.createdAt,
+                  })),
+                );
+              }
+            });
+        }
+        setLoading(false);
+      } else if (event === "message") {
+        if (data.senderType === "admin") {
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === data.id)) return prev;
+            return [
+              ...prev,
+              {
+                id: data.id,
+                role: "admin",
+                senderType: "admin",
+                content: data.content,
+                createdAt: data.createdAt,
+              },
+            ];
+          });
+        }
+      } else if (event === "takeover") {
         setMessages((prev) => [
           ...prev,
           {
-            id: msg.data.id,
-            role: "admin",
-            senderType: "admin",
-            content: msg.data.content,
-            createdAt: msg.data.createdAt,
+            role: "system",
+            senderType: "system",
+            content: data.text,
+            createdAt: new Date().toISOString(),
           },
         ]);
-      }
-    });
-
-    // Listen for takeover events from Admin console
-    channel.subscribe("takeover", (msg) => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "system",
-          senderType: "system",
-          content: msg.data.text,
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-    });
-
-    // Listen for typing events from the Admin
-    channel.subscribe("typing", (msg) => {
-      if (msg.data.clientId !== sessionId) {
-        setIsTyping(msg.data.isTyping);
-      }
-    });
-
-    // Subscribe to presence events to see if admin is online
-    channel.presence.subscribe("enter", () => checkPresence());
-    channel.presence.subscribe("leave", () => checkPresence());
-    channel.presence.subscribe("present", () => checkPresence());
-
-    async function checkPresence() {
-      try {
-        const members = await channel.presence.get();
-        if (members) {
-          const isAdminPresent = members.some((m) => m.clientId === "admin");
-          setAdminOnline(isAdminPresent);
+      } else if (event === "typing") {
+        if (data.clientId !== sessionId) {
+          setIsTyping(data.isTyping);
         }
-      } catch (err) {
-        console.error(err);
       }
-    }
+    },
+  });
 
-    channel.presence.enter();
-
-    return () => {
-      try { channel.unsubscribe(); } catch {}
-      try { channel.presence.leave(); } catch {}
-      try { realtime.close(); } catch {}
-      setRealtimeConnected(false);
-    };
-  }, [sessionId]);
-
+  // Automatically scroll to bottom when new messages arrive OR during active streaming
+  // but only if the user hasn't scrolled up
   useEffect(() => {
-    if (scrollRef.current) {
+    if (scrollRef.current && !showScrollBottomBtn) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, isTyping, loading, open]);
+  }, [messages, isTyping, loading, open, showScrollBottomBtn]);
+
+  const scrollToBottom = () => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      setShowScrollBottomBtn(false);
+    }
+  };
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.currentTarget;
+    // Detect if visitor scrolled up by more than 100px from the bottom
+    const isNearBottom =
+      target.scrollHeight - target.scrollTop - target.clientHeight < 100;
+    setShowScrollBottomBtn(!isNearBottom);
+  };
 
   // Trigger typing notification to the Admin
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
-    if (!ablyClient || !sessionId) return;
+    if (!sessionId) return;
 
-    const channel = ablyClient.channels.get(`conversations:${sessionId}`);
-    channel.publish("typing", { clientId: sessionId, isTyping: true });
+    // Call secure typing route
+    fetch("/api/chat/typing", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId, isTyping: true, clientId: sessionId }),
+    }).catch(console.error);
 
     if (typingTimeout) clearTimeout(typingTimeout);
 
     const timeout = setTimeout(() => {
-      channel.publish("typing", { clientId: sessionId, isTyping: false });
+      fetch("/api/chat/typing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, isTyping: false, clientId: sessionId }),
+      }).catch(console.error);
     }, 2000);
 
     setTypingTimeout(timeout);
   };
-
-  async function initializeNewSession() {
-    try {
-      const res = await fetch("/api/chat/message", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: "" }),
-      });
-      const data = await res.json();
-      if (data.sessionId) {
-        setSessionId(data.sessionId);
-        localStorage.setItem("favurr-chat-session", data.sessionId);
-        return data.sessionId;
-      }
-    } catch (e) {
-      console.error(e);
-    }
-    return null;
-  }
 
   async function sendMessage() {
     if (!input.trim() || isNetworkLoading) return;
     const userMsg = input.trim();
     setInput("");
 
-    let activeSessionId = sessionId;
-
-    // Create session on first message if missing
-    if (!activeSessionId) {
-      setLoading(true);
-      setIsNetworkLoading(true);
-      activeSessionId = await initializeNewSession();
-      setIsNetworkLoading(false);
-      if (!activeSessionId) {
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", senderType: "assistant", content: "Could not create session. Please retry." },
-        ]);
-        setLoading(false);
-        return;
-      }
-    }
+    const isRegistered =
+      localStorage.getItem("favurr-chat-registered") === "true";
 
     // Add user message locally
-    setMessages((prev) => [...prev, { role: "user", senderType: "visitor", content: userMsg }]);
+    const updatedMessages: Message[] = [
+      ...messages,
+      {
+        role: "user" as const,
+        senderType: "visitor" as const,
+        content: userMsg,
+      },
+    ];
+    setMessages(updatedMessages);
     setLoading(true);
     setAiStatus("searching");
+    setStatusText("Analyzing query...");
     setIsNetworkLoading(true);
 
     const safetyTimeout = setTimeout(() => {
@@ -394,7 +499,11 @@ export function ChatWidget() {
       const res = await fetch("/api/chat/message", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: activeSessionId, message: userMsg }),
+        body: JSON.stringify({
+          sessionId,
+          message: userMsg,
+          history: isRegistered ? undefined : updatedMessages,
+        }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -409,7 +518,11 @@ export function ChatWidget() {
       setAiStatus("idle");
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", senderType: "assistant", content: "Connection timed out. Please try again." },
+        {
+          role: "assistant",
+          senderType: "assistant",
+          content: "Connection timed out. Please try again.",
+        },
       ]);
       setLoading(false);
     } finally {
@@ -425,7 +538,11 @@ export function ChatWidget() {
         className="fixed bottom-6 right-6 z-50 p-4 rounded-full bg-primary text-primary-foreground shadow-lg hover:opacity-95 transition-all duration-300 scale-100 hover:scale-105 active:scale-95 cursor-pointer border border-border"
         aria-label="Toggle Chat"
       >
-        {open ? <X className="w-6 h-6" /> : <MessageCircle className="w-6 h-6" />}
+        {open ? (
+          <X className="w-6 h-6" />
+        ) : (
+          <MessageCircle className="w-6 h-6" />
+        )}
       </button>
 
       {/* Chat Window Panel */}
@@ -440,11 +557,13 @@ export function ChatWidget() {
           {/* Header Panel */}
           <div className="flex items-center justify-between px-4 py-3 bg-muted/20 border-b border-border/40 shrink-0">
             <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${adminOnline ? "bg-emerald-500 animate-pulse" : "bg-muted-foreground"}`} />
+              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40" />
               <div>
-                <p className="text-xs font-semibold text-foreground">Favurr Studio Agent</p>
+                <p className="text-xs font-semibold text-foreground">
+                  Favurr Studio Agent
+                </p>
                 <p className="text-[10px] text-muted-foreground font-mono uppercase tracking-widest">
-                  {adminOnline ? "Emeka is Online" : "Automated Assistant"}
+                  Automated Assistant
                 </p>
               </div>
             </div>
@@ -455,7 +574,11 @@ export function ChatWidget() {
                 className="hidden md:block p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
                 title={isExpanded ? "Collapse Window" : "Expand Window"}
               >
-                {isExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                {isExpanded ? (
+                  <Minimize2 className="w-4 h-4" />
+                ) : (
+                  <Maximize2 className="w-4 h-4" />
+                )}
               </button>
               <button
                 onClick={() => setOpen(false)}
@@ -466,109 +589,171 @@ export function ChatWidget() {
             </div>
           </div>
 
-          {/* Body Content */}
-          <MessageScrollerProvider>
-            <MessageScroller className="flex-1">
-              <MessageScrollerViewport ref={scrollRef} className="px-4 py-4" data-lenis-prevent>
-                <MessageScrollerContent className="gap-4">
-                  {messages.length === 0 && (
-                    <MessageScrollerItem className="text-center py-12 space-y-3">
-                      <MessageCircle className="w-10 h-10 text-muted-foreground/20 mx-auto" />
-                      <div>
-                        <p className="text-sm font-semibold text-foreground">Chat with Favurr AI</p>
-                        <p className="text-xs text-muted-foreground max-w-[28ch] mx-auto mt-1 leading-relaxed">
-                          Ask about Emeka's project stack, photography skills, availability, or experience details.
-                        </p>
-                      </div>
-                    </MessageScrollerItem>
-                  )}
+          {/* Body Content - Relative container to position scroll to bottom overlay */}
+          <div className="flex-1 relative min-h-0 flex flex-col">
+            <MessageScrollerProvider>
+              <MessageScroller className="flex-1">
+                <MessageScrollerViewport
+                  ref={scrollRef}
+                  className="px-4 py-4"
+                  data-lenis-prevent
+                  onScroll={handleScroll}
+                >
+                  <MessageScrollerContent className="gap-4">
+                    {messages.length === 0 && (
+                      <MessageScrollerItem className="text-center py-12 space-y-3">
+                        <MessageCircle className="w-10 h-10 text-muted-foreground/20 mx-auto" />
+                        <div>
+                          <p className="text-sm font-semibold text-foreground">
+                            Chat with Favurr AI
+                          </p>
+                          <p className="text-xs text-muted-foreground max-w-[28ch] mx-auto mt-1 leading-relaxed">
+                            Ask about Favurr's project stack, photography
+                            skills, availability, or experience details.
+                          </p>
+                        </div>
+                      </MessageScrollerItem>
+                    )}
 
-                  <MessageGroup className="gap-3.5 w-full">
-                    {messages.map((m, i) => {
-                      const isVisitor = m.senderType === "visitor" || m.role === "user";
-                      const hasClaimForm = m.content.includes("[CLAIM_FORM]") && !infoSubmitted;
-                      const textContent = m.content.replace("[CLAIM_FORM]", "").trim();
+                    <MessageGroup className="gap-3.5 w-full">
+                      {messages.map((m, i) => {
+                        const isVisitor =
+                          m.senderType === "visitor" || m.role === "user";
+                        const hasClaimForm =
+                          m.content.includes("[CLAIM_FORM]") && !infoSubmitted;
+                        const textContent = m.content
+                          .replace("[CLAIM_FORM]", "")
+                          .trim();
 
-                      if (m.role === "system") {
+                        if (m.role === "system") {
+                          return (
+                            <MessageScrollerItem key={i}>
+                              <Marker
+                                role="status"
+                                className="w-full justify-center text-center"
+                              >
+                                <MarkerContent className="text-[10px] font-mono text-muted-foreground/60 uppercase tracking-widest">
+                                  {m.content}
+                                </MarkerContent>
+                              </Marker>
+                            </MessageScrollerItem>
+                          );
+                        }
+
                         return (
                           <MessageScrollerItem key={i}>
-                            <Marker role="status" className="w-full justify-center text-center">
-                              <MarkerContent className="text-[10px] font-mono text-muted-foreground/60 uppercase tracking-widest">
-                                {m.content}
-                              </MarkerContent>
-                            </Marker>
+                            <ShadcnMessage align={isVisitor ? "end" : "start"}>
+                              <ShadcnMessageContent>
+                                <Bubble
+                                  variant={isVisitor ? "default" : "ghost"}
+                                  align={isVisitor ? "end" : "start"}
+                                  className={cn(
+                                    !isVisitor &&
+                                      "bg-transparent border-none shadow-none p-0 max-w-[90%]",
+                                  )}
+                                >
+                                  <BubbleContent
+                                    className={cn(
+                                      !isVisitor &&
+                                        "bg-transparent border-none shadow-none p-0 text-foreground text-sm",
+                                    )}
+                                  >
+                                    {!isVisitor ? (
+                                      <ChatMarkdown content={textContent} />
+                                    ) : (
+                                      <div className="whitespace-pre-wrap">
+                                        {textContent}
+                                      </div>
+                                    )}
+                                    {hasClaimForm && (
+                                      <InlineClaimForm
+                                        sessionId={sessionId}
+                                        history={messages}
+                                        onSubmitted={() =>
+                                          setInfoSubmitted(true)
+                                        }
+                                      />
+                                    )}
+                                    {m.content.includes("[CLAIM_FORM]") &&
+                                      infoSubmitted && (
+                                        <div className="flex items-center gap-1.5 mt-2 text-emerald-400 font-mono text-[10px] uppercase tracking-wider">
+                                          <Check className="w-3.5 h-3.5" />
+                                          <span>Details saved</span>
+                                        </div>
+                                      )}
+                                  </BubbleContent>
+                                </Bubble>
+                              </ShadcnMessageContent>
+                            </ShadcnMessage>
                           </MessageScrollerItem>
                         );
-                      }
+                      })}
 
-                      return (
-                        <MessageScrollerItem key={i}>
-                          <ShadcnMessage align={isVisitor ? "end" : "start"}>
+                      {/* Live Typing Status */}
+                      {isTyping && (
+                        <MessageScrollerItem>
+                          <ShadcnMessage align="start">
                             <ShadcnMessageContent>
-                              <Bubble variant={isVisitor ? "default" : "muted"} align={isVisitor ? "end" : "start"}>
-                                <BubbleContent>
-                                  <div className="whitespace-pre-wrap">{textContent}</div>
-                                  {hasClaimForm && (
-                                    <InlineClaimForm
-                                      sessionId={sessionId}
-                                      onSubmitted={() => setInfoSubmitted(true)}
-                                    />
-                                  )}
-                                  {m.content.includes("[CLAIM_FORM]") && infoSubmitted && (
-                                    <div className="flex items-center gap-1.5 mt-2 text-emerald-400 font-mono text-[10px] uppercase tracking-wider">
-                                      <Check className="w-3.5 h-3.5" />
-                                      <span>Details saved</span>
-                                    </div>
-                                  )}
+                              <Bubble variant="muted" align="start">
+                                <BubbleContent className="flex items-center gap-1.5 py-3">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:0ms]" />
+                                  <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:150ms]" />
+                                  <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:300ms]" />
                                 </BubbleContent>
                               </Bubble>
                             </ShadcnMessageContent>
                           </ShadcnMessage>
                         </MessageScrollerItem>
-                      );
-                    })}
+                      )}
+                    </MessageGroup>
 
-                    {/* Live Typing Status */}
-                    {isTyping && (
+                    {/* LLM Streaming Loading status using Marker */}
+                    {aiStatus === "searching" && (
                       <MessageScrollerItem>
-                        <ShadcnMessage align="start">
-                          <ShadcnMessageContent>
-                            <Bubble variant="muted" align="start">
-                              <BubbleContent className="flex items-center gap-1.5 py-3">
-                                <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:0ms]" />
-                                <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:150ms]" />
-                                <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:300ms]" />
-                              </BubbleContent>
-                            </Bubble>
-                          </ShadcnMessageContent>
-                        </ShadcnMessage>
+                        <Marker
+                          variant="separator"
+                          role="status"
+                          className="w-full"
+                        >
+                          <MarkerContent className="shimmer text-[9px] font-mono uppercase tracking-widest text-muted-foreground/60">
+                            {statusText}
+                          </MarkerContent>
+                        </Marker>
                       </MessageScrollerItem>
                     )}
-                  </MessageGroup>
 
-                  {/* LLM Streaming Loading status using Marker */}
-                  {aiStatus === "searching" && (
-                    <MessageScrollerItem>
-                      <Marker variant="separator" role="status" className="w-full">
-                        <MarkerContent className="shimmer">Scanning project catalog & experience logs...</MarkerContent>
-                      </Marker>
-                    </MessageScrollerItem>
-                  )}
+                    {aiStatus === "generating" && (
+                      <MessageScrollerItem>
+                        <Marker
+                          role="status"
+                          className="flex items-center gap-1.5 px-2"
+                        >
+                          <MarkerIcon className="size-3">
+                            <Spinner className="text-primary size-3" />
+                          </MarkerIcon>
+                          <MarkerContent className="shimmer text-[9px] font-mono uppercase tracking-widest text-muted-foreground/60">
+                            {statusText}
+                          </MarkerContent>
+                        </Marker>
+                      </MessageScrollerItem>
+                    )}
+                  </MessageScrollerContent>
+                </MessageScrollerViewport>
+              </MessageScroller>
+            </MessageScrollerProvider>
 
-                  {aiStatus === "generating" && (
-                    <MessageScrollerItem>
-                      <Marker role="status" className="flex items-center gap-1.5 px-2">
-                        <MarkerIcon>
-                          <Spinner className="text-primary" />
-                        </MarkerIcon>
-                        <MarkerContent className="shimmer">Thinking...</MarkerContent>
-                      </Marker>
-                    </MessageScrollerItem>
-                  )}
-                </MessageScrollerContent>
-              </MessageScrollerViewport>
-            </MessageScroller>
-          </MessageScrollerProvider>
+            {/* Scroll-to-bottom Floating overlay Button */}
+            {showScrollBottomBtn && (
+              <button
+                onClick={scrollToBottom}
+                type="button"
+                className="absolute bottom-4 right-4 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-foreground text-background text-[10px] font-mono uppercase tracking-wider shadow-lg hover:opacity-90 transition-opacity cursor-pointer border border-border/20"
+              >
+                <span>Scroll to bottom</span>
+                <ArrowDown className="w-3 h-3 animate-bounce" />
+              </button>
+            )}
+          </div>
 
           {/* Message Input Form */}
           <div className="px-4 py-3 border-t border-border/40 bg-muted/5 shrink-0">
@@ -577,16 +762,24 @@ export function ChatWidget() {
                 e.preventDefault();
                 sendMessage();
               }}
-              className="flex items-center gap-2"
+              className="flex items-end gap-2"
             >
-              <input
-                ref={inputRef}
-                value={input}
-                onChange={handleInputChange}
-                placeholder="Ask a question..."
-                className="flex-1 px-3.5 py-2.5 rounded-xl border border-border/60 bg-background text-foreground text-sm focus:outline-none focus:border-border transition-colors placeholder:text-muted-foreground/50 font-sans"
-                disabled={isNetworkLoading}
-              />
+              <div className="resize-none w-full">
+                <Textarea
+                  ref={inputRef as any}
+                  value={input}
+                  onChange={handleInputChange}
+                  placeholder="Ask a question..."
+                  className="flex-1 min-h-full max-h-28 resize-none overflow-y-auto px-3.5 py-2.5 rounded-xl border border-border/60 bg-background text-foreground text-sm focus:outline-none focus:border-border transition-colors placeholder:text-muted-foreground/50 font-sans"
+                  disabled={isNetworkLoading}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      sendMessage();
+                    }
+                  }}
+                />
+              </div>
               <button
                 type="submit"
                 disabled={!input.trim() || isNetworkLoading}

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { MessageCircle, Trash2, User, Send, Loader2, Sparkles, AlertCircle, Wifi, ArrowLeft } from "lucide-react";
-import Ably from "ably";
+import { useRealtime } from "@/lib/realtime-client";
 import { cn } from "@/lib/utils";
 import {
   MessageGroup,
@@ -38,9 +38,8 @@ export default function ChatsPage() {
   const [isSending, setIsSending] = useState(false);
 
   // Realtime takeover states
-  const [ablyClient, setAblyClient] = useState<Ably.Realtime | null>(null);
-  const [realtimeConnected, setRealtimeConnected] = useState(false);
-  const [visitorOnline, setVisitorOnline] = useState(false);
+  const [realtimeConnected, setRealtimeConnected] = useState(true);
+  const [visitorOnline, setVisitorOnline] = useState(true); // default to true, since presence is not tracked in upstash realtime
   const [visitorTyping, setVisitorTyping] = useState(false);
   const [typingTimeout, setTypingTimeout] = useState<NodeJS.Timeout | null>(null);
 
@@ -48,144 +47,89 @@ export default function ChatsPage() {
 
   useEffect(() => {
     fetchSessions();
-
-    // Retry token fetch to handle Next.js dev server on-demand route compilation delays
-    const fetchTokenWithRetry = async (id: string, retries = 6, delay = 2000): Promise<any> => {
-      for (let i = 0; i < retries; i++) {
-        try {
-          const res = await fetch("/api/chat/token", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ sessionId: id }),
-          });
-          if (res.ok) {
-            return await res.json();
-          }
-        } catch (e) {
-          console.warn(`Ably token fetch attempt ${i + 1} failed. Retrying...`, e);
-        }
-        if (i < retries - 1) {
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-      }
-      throw new Error("Failed to fetch Ably token after retries");
-    };
-
-    // Initialize Ably client for Admin console using Token Auth
-    const realtime = new Ably.Realtime({
-      authUrl: "/api/chat/token",
-      authMethod: "POST",
-      authParams: { sessionId: "admin" },
-      authHeaders: { "Content-Type": "application/json" },
-      authCallback: async (tokenParams, callback) => {
-        try {
-          const tokenRequest = await fetchTokenWithRetry("admin");
-          callback(null, tokenRequest);
-        } catch (err: any) {
-          callback(err, null);
-        }
-      },
-    });
-
-    setAblyClient(realtime);
-
-    realtime.connection.on("connected", () => {
-      setRealtimeConnected(true);
-    });
-
-    realtime.connection.on("disconnected", () => {
-      setRealtimeConnected(false);
-    });
-
-    const lobbyChannel = realtime.channels.get("conversations:lobby");
-    lobbyChannel.subscribe("new-session", (msg) => {
-      setSessions((prev) => {
-        if (prev.some((s) => s.id === msg.data.id)) return prev;
-        return [msg.data, ...prev];
-      });
-    });
-
-    lobbyChannel.subscribe("message-update", (msg) => {
-      const { sessionId, message } = msg.data;
-      
-      // Update the sidebar sessions preview in real-time
-      setSessions((prev) => {
-        const target = prev.find((s) => s.id === sessionId);
-        if (!target) return prev; 
-        
-        const updated = {
-          ...target,
-          updatedAt: message.createdAt,
-          messages: [message], // Update last message preview
-          _count: {
-            messages: target._count.messages + 1
-          }
-        };
-        
-        const filtered = prev.filter((s) => s.id !== sessionId);
-        return [updated, ...filtered];
-      });
-
-      // Update the currently selected thread view if matched
-      setThread((prevThread) => {
-        if (!prevThread || prevThread.id !== sessionId) return prevThread;
-        if (prevThread.messages.some((m) => m.id === message.id)) return prevThread;
-        return {
-          ...prevThread,
-          messages: [...prevThread.messages, message]
-        };
-      });
-    });
-
-    return () => {
-      try { lobbyChannel.unsubscribe(); } catch {}
-      try { realtime.close(); } catch {}
-      setRealtimeConnected(false);
-    };
   }, []);
 
-  // Sync session channel when selected chat changes
-  useEffect(() => {
-    if (!ablyClient || !selected) {
-      setVisitorOnline(false);
-      setVisitorTyping(false);
-      return;
-    }
+  // Subscribe to real-time updates via Upstash Realtime client hooks
+  useRealtime({
+    channels: selected ? ["conversations:lobby", `conversations:${selected}`] : ["conversations:lobby"],
+    events: ["new-session", "message-update", "typing", "message"],
+    onData({ event, data, channel }) {
+      if (event === "new-session") {
+        setSessions((prev) => {
+          if (prev.some((s) => s.id === data.id)) return prev;
+          const newSess: ChatSession = {
+            id: data.id,
+            name: data.visitorName || null,
+            email: data.visitorEmail || null,
+            isAiActive: data.isAiActive ?? true,
+            createdAt: data.createdAt || new Date().toISOString(),
+            updatedAt: data.updatedAt || new Date().toISOString(),
+            messages: data.messages || [],
+            _count: data._count || { messages: 0 },
+          };
+          return [newSess, ...prev];
+        });
+      } else if (event === "message-update") {
+        const { sessionId, message } = data;
+        const formattedMsg = {
+          id: message.id || `temp-${Date.now()}`,
+          role: message.role,
+          senderType: message.senderType,
+          content: message.content,
+          createdAt: message.createdAt || new Date().toISOString(),
+        };
+        
+        // Update the sidebar sessions preview in real-time
+        setSessions((prev) => {
+          const target = prev.find((s) => s.id === sessionId);
+          if (!target) return prev; 
+          
+          const updated = {
+            ...target,
+            updatedAt: formattedMsg.createdAt,
+            messages: [formattedMsg], // Update last message preview
+            _count: {
+              messages: target._count.messages + 1
+            }
+          };
+          
+          const filtered = prev.filter((s) => s.id !== sessionId);
+          return [updated, ...filtered];
+        });
 
-    const channel = ablyClient.channels.get(`conversations:${selected}`);
-
-    // Listen for visitor typing alerts
-    channel.subscribe("typing", (msg) => {
-      if (msg.data.clientId !== "admin") {
-        setVisitorTyping(msg.data.isTyping);
-      }
-    });
-
-    // Subscribe to presence list to know if the visitor is online
-    channel.presence.subscribe("enter", () => checkPresence());
-    channel.presence.subscribe("leave", () => checkPresence());
-    channel.presence.subscribe("present", () => checkPresence());
-
-    async function checkPresence() {
-      try {
-        const members = await channel.presence.get();
-        if (members) {
-          const isUserPresent = members.some((m) => m.clientId === selected);
-          setVisitorOnline(isUserPresent);
+        // Update the currently selected thread view if matched
+        setThread((prevThread) => {
+          if (!prevThread || prevThread.id !== sessionId) return prevThread;
+          if (prevThread.messages.some((m) => m.id === formattedMsg.id)) return prevThread;
+          return {
+            ...prevThread,
+            messages: [...prevThread.messages, formattedMsg]
+          };
+        });
+      } else if (event === "typing" && channel === `conversations:${selected}`) {
+        if (data.clientId !== "admin") {
+          setVisitorTyping(data.isTyping);
         }
-      } catch (err) {
-        console.error(err);
+      } else if (event === "message" && channel === `conversations:${selected}`) {
+        const formattedMsg = {
+          id: data.id || `temp-${Date.now()}`,
+          role: data.role,
+          senderType: data.senderType,
+          content: data.content,
+          createdAt: data.createdAt || new Date().toISOString(),
+        };
+        // If we receive a message in the selected channel, append it to thread if not already there
+        setThread((prevThread) => {
+          if (!prevThread || prevThread.id !== selected) return prevThread;
+          if (prevThread.messages.some((m) => m.id === formattedMsg.id)) return prevThread;
+          return {
+            ...prevThread,
+            messages: [...prevThread.messages, formattedMsg]
+          };
+        });
       }
     }
-
-    channel.presence.enter();
-    checkPresence();
-
-    return () => {
-      try { channel.unsubscribe(); } catch {}
-      try { channel.presence.leave(); } catch {}
-    };
-  }, [ablyClient, selected]);
+  });
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -239,15 +183,22 @@ export default function ChatsPage() {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInput(e.target.value);
-    if (!ablyClient || !selected) return;
+    if (!selected) return;
 
-    const channel = ablyClient.channels.get(`conversations:${selected}`);
-    channel.publish("typing", { clientId: "admin", isTyping: true });
+    fetch("/api/chat/typing", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: selected, isTyping: true, clientId: "admin" }),
+    }).catch(console.error);
 
     if (typingTimeout) clearTimeout(typingTimeout);
 
     const timeout = setTimeout(() => {
-      channel.publish("typing", { clientId: "admin", isTyping: false });
+      fetch("/api/chat/typing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: selected, isTyping: false, clientId: "admin" }),
+      }).catch(console.error);
     }, 2000);
 
     setTypingTimeout(timeout);
