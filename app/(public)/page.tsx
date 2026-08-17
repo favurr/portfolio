@@ -25,7 +25,7 @@ export default async function Home() {
   return (
 <HomeAnimations>
       {/* 1. Hero Section */}
-      <section className="relative min-h-screen md:min-h-dvh flex flex-col justify-end overflow-hidden py-16 md:py-24 px-6 sm:px-8 lg:px-12 bg-background">
+      <section className="relative min-h-screen md:min-h-dvh flex flex-col justify-end overflow-hidden px-6 sm:px-8 lg:px-12 bg-background">
         {/* Full-bleed high-end background video */}
         <div className="absolute inset-0 z-0 w-full h-full">
           <video
@@ -41,7 +41,7 @@ export default async function Home() {
         {/* Warm cinematic tungsten/bronze blend overlay mask */}
         <div className="absolute inset-0 z-1 w-full h-full bg-linear-to-b from-background/10 via-background/20 to-background backdrop-blur-[1px]" />
 
-        <div className="mx-auto w-full max-w-6xl relative z-10 pb-16 md:pb-24">
+        <div className="mx-auto w-full max-w-6xl relative z-10 flex flex-col h-full justify-end pb-20 md:pb-32">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
             {/* Left Side: Content - anchored to bottom left with wider span */}
             <div className="lg:col-span-8 text-left">
