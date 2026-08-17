@@ -1,4 +1,4 @@
-export type AIProvider = "gemini" | "openai" | "nvidia" | "openrouter";
+export type AIProvider = "openrouter" | "gemini" | "openai" | "nvidia";
 
 export interface ChatMessage {
   role: "user" | "assistant" | "system";
@@ -12,6 +12,18 @@ const PROVIDERS: Record<AIProvider, {
   auth: (key: string) => string;
   authType: "query" | "header";
 }> = {
+  openrouter: {
+    url: "https://openrouter.ai/api/v1/chat/completions",
+    transform: (messages, systemPrompt) => ({
+      model: "nvidia/nemotron-3-ultra-550b-a55b:free",
+      messages: [{ role: "system", content: systemPrompt }, ...messages],
+      max_tokens: 2048,
+      temperature: 0.7,
+    }),
+    extract: (data) => data.choices?.[0]?.message?.content || "No response",
+    auth: (key) => `Bearer ${key}`,
+    authType: "header",
+  },
   gemini: {
     url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
     transform: (messages, systemPrompt) => ({
@@ -46,25 +58,15 @@ const PROVIDERS: Record<AIProvider, {
     auth: (key) => `Bearer ${key}`,
     authType: "header",
   },
-  openrouter: {
-    url: "https://openrouter.ai/api/v1/chat/completions",
-    transform: (messages, systemPrompt) => ({
-      model: "meta-llama/llama-3.1-8b-instruct:free",
-      messages: [{ role: "system", content: systemPrompt }, ...messages],
-    }),
-    extract: (data) => data.choices?.[0]?.message?.content || "No response",
-    auth: (key) => `Bearer ${key}`,
-    authType: "header",
-  },
 };
 
 export async function getAIResponse(messages: ChatMessage[], systemPrompt: string): Promise<string> {
-  const providerOrder: AIProvider[] = ["gemini", "openai", "nvidia", "openrouter"];
+  const providerOrder: AIProvider[] = ["openrouter", "gemini", "openai", "nvidia"];
   const envKeys: Record<AIProvider, string | undefined> = {
+    openrouter: process.env.OPENROUTER_API_KEY,
     gemini: process.env.GEMINI_API_KEY,
     openai: process.env.OPENAI_API_KEY,
     nvidia: process.env.NVIDIA_API_KEY,
-    openrouter: process.env.OPENROUTER_API_KEY,
   };
 
   for (const provider of providerOrder) {

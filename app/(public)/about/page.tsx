@@ -3,6 +3,8 @@ import { AboutAnimations } from "./components/AboutAnimations";
 import { TechBadge } from "./components/TechBadge";
 import { ArrowUpRight, ArrowRight } from "lucide-react";
 
+export const revalidate = 60;
+
 export const metadata = {
   title: "About | Favurr — Design Engineer",
   description: "Learn more about Favurr, a full-stack design engineer building polished, high-performance web applications and digital experiences.",

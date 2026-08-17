@@ -7,6 +7,7 @@ import { realtime } from "@/lib/realtime";
 import prisma from "@/lib/prisma";
 import { vectorIndex } from "@/lib/vector";
 import { SemanticCache } from "@upstash/semantic-cache";
+import { Redis } from "@upstash/redis";
 
 const semanticCache = vectorIndex
   ? new SemanticCache({
@@ -15,8 +16,49 @@ const semanticCache = vectorIndex
     })
   : null;
 
-// Select the AI model dynamically based on environment keys
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+});
+
+const VECTOR_CACHE_TTL = 300; // 5 minutes
+const VECTOR_CACHE_PREFIX = "vector:search:";
+
+async function getCachedVectorResults(query: string): Promise<any[] | null> {
+  try {
+    const key = `${VECTOR_CACHE_PREFIX}${Buffer.from(query).toString("base64").slice(0, 100)}`;
+    const cached = await redis.get<string>(key);
+    if (cached) {
+      console.log(`[AI-CHAT] Vector cache HIT for: "${query}"`);
+      return JSON.parse(cached);
+    }
+  } catch (err) {
+    console.warn("[AI-CHAT] Vector cache get failed:", err);
+  }
+  return null;
+}
+
+async function setCachedVectorResults(query: string, results: any[]): Promise<void> {
+  try {
+    const key = `${VECTOR_CACHE_PREFIX}${Buffer.from(query).toString("base64").slice(0, 100)}`;
+    await redis.set(key, JSON.stringify(results), { ex: VECTOR_CACHE_TTL });
+  } catch (err) {
+    console.warn("[AI-CHAT] Vector cache set failed:", err);
+  }
+}
+
+// Select the AI model dynamically based on environment keys (OpenRouter first as default)
 function getActiveModel() {
+  if (process.env.OPENROUTER_API_KEY) {
+    const openrouter = createOpenAI({
+      apiKey: process.env.OPENROUTER_API_KEY,
+      baseURL: "https://openrouter.ai/api/v1",
+    });
+    return {
+      model: openrouter.chat("nvidia/nemotron-3-ultra-550b-a55b:free"),
+      name: "openrouter-nemotron-3-ultra",
+    };
+  }
   if (process.env.NVIDIA_API_KEY) {
     const nvidia = createOpenAI({
       apiKey: process.env.NVIDIA_API_KEY,
@@ -153,11 +195,22 @@ export async function processAiResponse(
       try {
         await channel.emit("status", { text: "Analyzing query & scanning catalog..." });
         console.log(`[AI-CHAT] Querying Upstash Vector for query: "${lastUserMessage}"`);
-        const results = await vectorIndex.query({
-          data: lastUserMessage,
-          topK: 6,
-          includeMetadata: true,
-        });
+
+        // Check Redis cache first
+        const cachedResults = await getCachedVectorResults(lastUserMessage);
+        let results = cachedResults;
+        
+        if (!results) {
+          results = await vectorIndex.query({
+            data: lastUserMessage,
+            topK: 6,
+            includeMetadata: true,
+          });
+          // Cache the results
+          await setCachedVectorResults(lastUserMessage, results);
+        } else {
+          console.log(`[AI-CHAT] Using cached vector results (${results.length} matches)`);
+        }
 
         console.log(`[AI-CHAT] Upstash Vector matched ${results.length} results.`);
         const knowledgeFacts: string[] = [];

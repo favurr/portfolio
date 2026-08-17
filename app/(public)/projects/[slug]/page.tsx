@@ -4,6 +4,9 @@ import { projectDal } from "@/dal/project";
 import { SectionRenderer } from "@/components/project/section-renderer";
 import { ProjectDetailAnimations } from "./components/ProjectDetailAnimations";
 import { ArrowUpRight, ArrowRight, ArrowLeft } from "lucide-react";
+import { sanitizeHtml } from "@/lib/sanitize";
+
+export const revalidate = 60;
 
 interface ProjectPageProps {
   params: Promise<{
@@ -159,7 +162,7 @@ export default async function ProjectDetailPage({ params }: ProjectPageProps) {
               <span className="font-mono text-xs uppercase tracking-widest text-muted-foreground block mb-2">Overview</span>
               <div
                 className="prose prose-invert max-w-none text-muted-foreground text-base sm:text-lg leading-relaxed prose-headings:font-serif prose-headings:font-normal prose-headings:text-foreground prose-a:text-foreground prose-a:underline"
-                dangerouslySetInnerHTML={{ __html: project.overview }}
+                dangerouslySetInnerHTML={{ __html: sanitizeHtml(project.overview) }}
               />
             </div>
           )}

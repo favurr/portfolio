@@ -299,6 +299,7 @@ export function ChatWidget() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [infoSubmitted, setInfoSubmitted] = useState(false);
   const [showScrollBottomBtn, setShowScrollBottomBtn] = useState(false);
+  const [sessionInitialized, setSessionInitialized] = useState(false);
 
   // Realtime states
   const [isTyping, setIsTyping] = useState(false);
@@ -312,27 +313,41 @@ export function ChatWidget() {
   const streamMessageRef = useRef<string>("");
   const typingSentRef = useRef(false);
 
-  // Initialize sessionId from localStorage on mount
+  // Initialize sessionId from server on mount
   useEffect(() => {
-    let storedId = localStorage.getItem("favurr-chat-session");
-    if (!storedId) {
-      storedId = crypto.randomUUID();
-      localStorage.setItem("favurr-chat-session", storedId);
-      localStorage.setItem("favurr-chat-registered", "false");
-    }
-    setSessionId(storedId);
-
-    const registered = localStorage.getItem("favurr-chat-registered") === "true";
-    if (!registered) {
-      const savedMessages = localStorage.getItem("favurr-chat-messages");
-      if (savedMessages) {
-        try {
-          setMessages(JSON.parse(savedMessages));
-        } catch (e) {
-          console.error("Error parsing saved messages:", e);
+    let mounted = true;
+    
+    async function initSession() {
+      try {
+        const res = await fetch("/api/chat/session", {
+          method: "GET",
+          credentials: "same-origin",
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (mounted && data.sessionId) {
+            setSessionId(data.sessionId);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to initialize chat session:", err);
+        // Fallback: generate local session ID
+        if (mounted) {
+          const fallbackId = crypto.randomUUID();
+          setSessionId(fallbackId);
+        }
+      } finally {
+        if (mounted) {
+          setSessionInitialized(true);
         }
       }
     }
+
+    initSession();
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const isRegistered = typeof window !== "undefined" && localStorage.getItem("favurr-chat-registered") === "true";
@@ -346,7 +361,7 @@ export function ChatWidget() {
       if (res.error) throw new Error("Failed to fetch session");
       return res.data;
     },
-    enabled: !!sessionId && isRegistered,
+    enabled: !!sessionId && isRegistered && sessionInitialized,
   });
 
   // Sync React Query loaded data to local state
@@ -379,7 +394,7 @@ export function ChatWidget() {
 
   // Subscribe to real-time events via Upstash Realtime hook
   useRealtime({
-    channels: sessionId ? [`conversations:${sessionId}`] : [],
+    channels: sessionId && sessionInitialized ? [`conversations:${sessionId}`] : [],
     events: ["status", "token", "done", "message", "takeover", "typing"],
     onData({ event, data }) {
       if (event === "status") {
@@ -494,7 +509,7 @@ export function ChatWidget() {
   // Trigger typing notification to the Admin
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
-    if (!sessionId) return;
+    if (!sessionId || !sessionInitialized) return;
 
     // Only send typing:true once when starting to type
     if (!typingSentRef.current) {
@@ -525,7 +540,7 @@ export function ChatWidget() {
   };
 
   async function sendMessage() {
-    if (!input.trim() || isNetworkLoading) return;
+    if (!input.trim() || isNetworkLoading || !sessionId) return;
     const userMsg = input.trim();
     setInput("");
 
@@ -700,7 +715,7 @@ export function ChatWidget() {
                                   className={cn(
                                     isVisitor && "w-full",
                                     !isVisitor &&
-                                      "bg-transparent border-none shadow-none p-0 max-w-[100%]",
+                                      "bg-transparent border-none shadow-none p-0 max-w-full",
                                   )}
                                 >
                                   <BubbleContent

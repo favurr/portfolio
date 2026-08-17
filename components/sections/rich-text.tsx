@@ -1,3 +1,5 @@
+import { sanitizeHtml } from "@/lib/sanitize";
+
 interface RichTextProps {
   content?: string | null;
   props?: {
@@ -19,7 +21,7 @@ export default function RichTextSection({ content, props }: RichTextProps) {
       {content ? (
         <div 
           className="space-y-4 prose prose-invert max-w-none prose-p:leading-relaxed prose-headings:font-serif prose-headings:font-normal prose-headings:text-foreground prose-a:text-foreground prose-a:underline break-inside-avoid"
-          dangerouslySetInnerHTML={{ __html: content }} 
+          dangerouslySetInnerHTML={{ __html: sanitizeHtml(content) }} 
         />
       ) : (
         <p className="text-muted-foreground/60 font-mono text-xs italic">

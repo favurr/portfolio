@@ -2,6 +2,7 @@ import { blogDal } from "@/dal/blog";
 import { notFound } from "next/navigation";
 import { TransitionLink } from "@/components/transition-provider";
 import { ArrowLeft, Calendar, Tag } from "lucide-react";
+import { sanitizeHtml } from "@/lib/sanitize";
 
 export const revalidate = 60; // Cache for 60 seconds
 
@@ -104,7 +105,7 @@ export default async function BlogPostPage({ params }: PageProps) {
         {/* Main Editorial Body Content */}
         <div 
           className="blog-content prose prose-invert max-w-none font-sans text-base leading-relaxed text-muted-foreground space-y-6"
-          dangerouslySetInnerHTML={{ __html: post.content }}
+          dangerouslySetInnerHTML={{ __html: sanitizeHtml(post.content) }}
         />
       </div>
     </article>

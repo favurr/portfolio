@@ -1,10 +1,20 @@
 import prisma from "@/lib/prisma";
+import { unstable_cache } from "next/cache";
+import { CACHE_TAGS } from "@/lib/cache";
 
-export const settingsDal = {
-  async getSettings() {
+const getSettingsCached = unstable_cache(
+  async () => {
     return prisma.setting.findUnique({
       where: { id: "global" },
     });
+  },
+  [CACHE_TAGS.settings],
+  { revalidate: 60, tags: [CACHE_TAGS.settings] }
+);
+
+export const settingsDal = {
+  async getSettings() {
+    return getSettingsCached();
   },
 
   async updateSettings(data: {

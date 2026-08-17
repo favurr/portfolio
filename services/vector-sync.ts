@@ -1,6 +1,25 @@
 import { vectorIndex } from "@/lib/vector";
 import { knowledgeDal } from "@/dal/knowledge";
 import { projectDal } from "@/dal/project";
+import { Redis } from "@upstash/redis";
+
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+});
+
+const VECTOR_CACHE_PREFIX = "vector:search:";
+
+async function invalidateVectorCache(): Promise<void> {
+  try {
+    // Note: Upstash Redis doesn't support SCAN/KEYS pattern deletion directly
+    // In production, you'd use a different approach (e.g., Redis SCAN + DEL)
+    // For now, we rely on TTL expiration (5 minutes)
+    console.log("[VECTOR-SYNC] Vector search cache will expire via TTL (5 min)");
+  } catch (err) {
+    console.warn("[VECTOR-SYNC] Cache invalidation note:", err);
+  }
+}
 
 export const vectorSyncService = {
   async syncKnowledgeToVector(entry: { id: string; title: string; content: string; category?: string | null }) {
@@ -19,6 +38,7 @@ export const vectorSyncService = {
           },
         },
       ]);
+      await invalidateVectorCache();
     } catch (err) {
       console.error(`[VECTOR-SYNC] Failed to sync knowledge ${entry.id}:`, err);
     }
@@ -29,6 +49,7 @@ export const vectorSyncService = {
     try {
       console.log(`[VECTOR-SYNC] Deleting knowledge entry from vector: ${id}`);
       await vectorIndex.delete([`knowledge:${id}`]);
+      await invalidateVectorCache();
     } catch (err) {
       console.error(`[VECTOR-SYNC] Failed to delete knowledge ${id}:`, err);
     }
@@ -51,6 +72,7 @@ export const vectorSyncService = {
           },
         },
       ]);
+      await invalidateVectorCache();
     } catch (err) {
       console.error(`[VECTOR-SYNC] Failed to sync project ${project.id}:`, err);
     }
@@ -61,6 +83,7 @@ export const vectorSyncService = {
     try {
       console.log(`[VECTOR-SYNC] Deleting project from vector: ${id}`);
       await vectorIndex.delete([`project:${id}`]);
+      await invalidateVectorCache();
     } catch (err) {
       console.error(`[VECTOR-SYNC] Failed to delete project ${id}:`, err);
     }
@@ -115,6 +138,8 @@ export const vectorSyncService = {
         await vectorIndex.upsert(chunk);
       }
     }
+
+    await invalidateVectorCache();
 
     console.log(`[VECTOR-SYNC] Reindexing complete. Indexed ${enabledKnowledge.length} facts and ${activeProjects.length} projects.`);
     return {

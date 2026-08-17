@@ -1,4 +1,59 @@
 import prisma from "@/lib/prisma";
+import { unstable_cache } from "next/cache";
+import { CACHE_TAGS } from "@/lib/cache";
+
+const getPublishedProjectsCached = unstable_cache(
+  async () => {
+    return prisma.project.findMany({
+      where: {
+        status: { in: ["live", "in progress"] }
+      },
+      orderBy: { order: "asc" },
+    });
+  },
+  [CACHE_TAGS.projects],
+  { revalidate: 60, tags: [CACHE_TAGS.projects] }
+);
+
+const getActiveProjectsCountCached = unstable_cache(
+  async () => {
+    return prisma.project.count({
+      where: {
+        status: { in: ["live", "in progress"] }
+      }
+    });
+  },
+  [CACHE_TAGS.projects, "count"],
+  { revalidate: 60, tags: [CACHE_TAGS.projects] }
+);
+
+const getFeaturedProjectsCached = unstable_cache(
+  async () => {
+    return prisma.project.findMany({
+      where: {
+        featured: true
+      },
+      orderBy: { order: "asc" },
+    });
+  },
+  [CACHE_TAGS.projects, "featured"],
+  { revalidate: 60, tags: [CACHE_TAGS.projects] }
+);
+
+const getProjectBySlugCached = unstable_cache(
+  async (slug: string) => {
+    return prisma.project.findUnique({
+      where: { slug },
+      include: {
+        sections: {
+          orderBy: { order: "asc" },
+        },
+      },
+    });
+  },
+  [CACHE_TAGS.projects, "slug"],
+  { revalidate: 60, tags: [CACHE_TAGS.projects] }
+);
 
 export const projectDal = {
   async getProjects() {
@@ -8,42 +63,19 @@ export const projectDal = {
   },
 
   async getPublishedProjects() {
-    // Show all projects that are not drafts or archived
-    return prisma.project.findMany({
-      where: {
-        status: { in: ["live", "in progress"] }
-      },
-      orderBy: { order: "asc" },
-    });
+    return getPublishedProjectsCached();
   },
 
   async getActiveProjectsCount() {
-    return prisma.project.count({
-      where: {
-        status: { in: ["live", "in progress"] }
-      }
-    });
+    return getActiveProjectsCountCached();
   },
 
   async getFeaturedProjects() {
-    // Featured on home dictates whether it shows on public homepage route
-    return prisma.project.findMany({
-      where: {
-        featured: true
-      },
-      orderBy: { order: "asc" },
-    });
+    return getFeaturedProjectsCached();
   },
 
   async getProjectBySlug(slug: string) {
-    return prisma.project.findUnique({
-      where: { slug },
-      include: {
-        sections: {
-          orderBy: { order: "asc" },
-        },
-      },
-    });
+    return getProjectBySlugCached(slug);
   },
 
   async getNextProject(currentOrder: number, currentId: string) {

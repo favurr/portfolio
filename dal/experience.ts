@@ -1,11 +1,21 @@
 import prisma from "@/lib/prisma";
+import { unstable_cache } from "next/cache";
+import { CACHE_TAGS } from "@/lib/cache";
 
-export const experienceDal = {
-  async getVisibleExperiences() {
+const getVisibleExperiencesCached = unstable_cache(
+  async () => {
     return prisma.experience.findMany({
       where: { visible: true },
       orderBy: { order: "asc" },
     });
+  },
+  [CACHE_TAGS.experiences],
+  { revalidate: 60, tags: [CACHE_TAGS.experiences] }
+);
+
+export const experienceDal = {
+  async getVisibleExperiences() {
+    return getVisibleExperiencesCached();
   },
   async getAllExperiences() {
     return prisma.experience.findMany({ orderBy: { order: "asc" } });

@@ -42,6 +42,7 @@ import {
   reorderSectionsAction
 } from "../actions";
 import { SectionRenderer } from "@/components/project/section-renderer";
+import { sanitizeHtmlClient } from "@/lib/sanitize-client";
 
 interface Project {
   id: string;
@@ -1469,16 +1470,16 @@ export default function StudioProjectsPage() {
               </div>
             </div>
 
-             {/* Client Overview Block */}
-             {localProjectState.overview && (
-               <div className="max-w-4xl mb-24 space-y-4">
-                 <span className="font-mono text-xs uppercase tracking-widest text-muted-foreground block mb-2">Overview</span>
-                 <div
-                   className="prose prose-invert max-w-none text-muted-foreground text-base sm:text-lg leading-relaxed prose-headings:font-serif prose-headings:font-normal prose-headings:text-foreground prose-a:text-foreground prose-a:underline"
-                   dangerouslySetInnerHTML={{ __html: localProjectState.overview }}
-                 />
-               </div>
-             )}
+{/* Client Overview Block */}
+              {localProjectState.overview && (
+                <div className="max-w-4xl mb-24 space-y-4">
+                  <span className="font-mono text-xs uppercase tracking-widest text-muted-foreground block mb-2">Overview</span>
+                  <div
+                    className="prose prose-invert max-w-none text-muted-foreground text-base sm:text-lg leading-relaxed prose-headings:font-serif prose-headings:font-normal prose-headings:text-foreground prose-a:text-foreground prose-a:underline"
+                    dangerouslySetInnerHTML={{ __html: sanitizeHtmlClient(localProjectState.overview) }}
+                  />
+                </div>
+              )}
 
              {/* Featured Image */}
              {localProjectState.featuredImage && (
@@ -1518,11 +1519,11 @@ export default function StudioProjectsPage() {
 
                    {/* Right layout block preview */}
                    <div className="lg:col-span-9">
-                     {sec.componentKey === "rich-text" ? (
-                       <div className={`prose prose-invert max-w-none text-muted-foreground leading-relaxed text-left ${sec.props?.bgStyle === "card" ? "p-8 bg-muted/10 border border-border/40 rounded-xl" : ""}`}>
-                         {sec.content ? (
-                           <div dangerouslySetInnerHTML={{ __html: sec.content }} />
-                         ) : (
+{sec.componentKey === "rich-text" ? (
+                        <div className={`prose prose-invert max-w-none text-muted-foreground leading-relaxed text-left ${sec.props?.bgStyle === "card" ? "p-8 bg-muted/10 border border-border/40 rounded-xl" : ""}`}>
+                          {sec.content ? (
+                            <div dangerouslySetInnerHTML={{ __html: sanitizeHtmlClient(sec.content) }} />
+                          ) : (
                            <p className="font-mono text-xs italic text-muted-foreground/60">Empty Text Block</p>
                          )}
                        </div>

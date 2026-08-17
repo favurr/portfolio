@@ -1,7 +1,9 @@
 import prisma from "@/lib/prisma";
+import { unstable_cache } from "next/cache";
+import { CACHE_TAGS } from "@/lib/cache";
 
-export const mediaDal = {
-  async getMediaItems(projectId?: string) {
+const getMediaItemsCached = unstable_cache(
+  async (projectId?: string) => {
     return prisma.media.findMany({
       where: projectId ? { projectId } : undefined,
       include: {
@@ -14,6 +16,24 @@ export const mediaDal = {
       },
       orderBy: { createdAt: "desc" },
     });
+  },
+  [CACHE_TAGS.media()],
+  { revalidate: 60, tags: [CACHE_TAGS.media()] }
+);
+
+const getMediaItemByIdCached = unstable_cache(
+  async (id: string) => {
+    return prisma.media.findUnique({
+      where: { id },
+    });
+  },
+  [CACHE_TAGS.media(), "id"],
+  { revalidate: 60, tags: [CACHE_TAGS.media()] }
+);
+
+export const mediaDal = {
+  async getMediaItems(projectId?: string) {
+    return getMediaItemsCached(projectId);
   },
 
   async createMediaItem(data: {
@@ -38,8 +58,6 @@ export const mediaDal = {
   },
 
   async getMediaItemById(id: string) {
-    return prisma.media.findUnique({
-      where: { id },
-    });
+    return getMediaItemByIdCached(id);
   },
 };

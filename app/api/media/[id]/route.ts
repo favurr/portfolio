@@ -5,9 +5,9 @@ import { mediaDal } from "@/dal/media";
 import ImageKit from "imagekit";
 
 const imagekit = new ImageKit({
-  publicKey: process.env.IMAGEKIT_PUBLIC_KEY || "public_mB/mEeb+t0K1LgVst6y0oP/aVCo=",
-  privateKey: process.env.IMAGEKIT_PRIVATE_KEY || "private_B2TjZ9C/Zlqf+w9vI62kZ7B9s5w=",
-  urlEndpoint: process.env.IMAGEKIT_URL_ENDPOINT || "https://ik.imagekit.io/favurr",
+  publicKey: process.env.IMAGEKIT_PUBLIC_KEY!,
+  privateKey: process.env.IMAGEKIT_PRIVATE_KEY!,
+  urlEndpoint: process.env.IMAGEKIT_URL_ENDPOINT!,
 });
 
 export async function DELETE(

@@ -1,14 +1,32 @@
 import prisma from "@/lib/prisma";
+import { unstable_cache } from "next/cache";
+import { CACHE_TAGS } from "@/lib/cache";
 
-export const blogDal = {
-  async getPublishedPosts() {
+const getPublishedPostsCached = unstable_cache(
+  async () => {
     return prisma.blogPost.findMany({
       where: { status: "published" },
       orderBy: { publishedAt: "desc" },
     });
   },
-  async getPostBySlug(slug: string) {
+  [CACHE_TAGS.blog],
+  { revalidate: 60, tags: [CACHE_TAGS.blog] }
+);
+
+const getPostBySlugCached = unstable_cache(
+  async (slug: string) => {
     return prisma.blogPost.findUnique({ where: { slug } });
+  },
+  [CACHE_TAGS.blog, "slug"],
+  { revalidate: 60, tags: [CACHE_TAGS.blog] }
+);
+
+export const blogDal = {
+  async getPublishedPosts() {
+    return getPublishedPostsCached();
+  },
+  async getPostBySlug(slug: string) {
+    return getPostBySlugCached(slug);
   },
   async getAllPosts() {
     return prisma.blogPost.findMany({ orderBy: { createdAt: "desc" } });

@@ -8,6 +8,8 @@ import { HomeAnimations } from "./components/HomeAnimations";
 import Image from "next/image";
 import { Marquee } from "@/components/shared/marquee";
 
+export const revalidate = 60;
+
 const SKILLS = [
   "TypeScript", "Next.js", "React", "Node.js", 
   "PostgreSQL", "Prisma ORM", "Tailwind CSS", "System Design"
@@ -69,7 +71,7 @@ export default async function Home() {
         </div>
 
         {/* Static Scroll hint with bounce animation */}
-        <div className="hero-text mt-8 flex z-10 justify-end w-full max-w-6xl mx-auto">
+        <div className="hero-text mt-8 flex z-10 md:justify-end w-full max-w-6xl mx-auto">
           <span className="font-mono text-xs text-muted-foreground tracking-wider uppercase flex items-center gap-1 select-none animate-bounce">
             Scroll &darr;
           </span>

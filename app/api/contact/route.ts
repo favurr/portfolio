@@ -1,8 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
+import { headers } from "next/headers";
 import { contactDal } from "@/dal/contact";
+import { checkRateLimit } from "@/lib/rate-limit";
+
+function sanitizeHeaderValue(value: string): string {
+  return value.replace(/[\r\n]/g, "").trim();
+}
+
+function validateEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
 
 export async function POST(req: NextRequest) {
   try {
+    const headersList = await headers();
+    const ip = headersList.get("x-forwarded-for")?.split(",")[0]?.trim() || 
+               headersList.get("x-real-ip") || 
+               "unknown";
+    
+    const { success } = await checkRateLimit(`contact:${ip}`, "strict");
+    if (!success) {
+      return NextResponse.json({ error: "Rate limit exceeded. Please wait before sending more messages." }, { status: 429 });
+    }
+
     const { name, email, subject, message } = await req.json();
 
     if (!name || !email || !message) {
@@ -12,17 +32,27 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (!validateEmail(email)) {
+      return NextResponse.json({ error: "Invalid email format" }, { status: 400 });
+    }
+
+    if (name.length > 100 || email.length > 254 || message.length > 5000 || (subject && subject.length > 200)) {
+      return NextResponse.json({ error: "Input too long" }, { status: 400 });
+    }
+
+    const safeName = sanitizeHeaderValue(name);
+    const safeEmail = sanitizeHeaderValue(email);
+    const safeSubject = subject ? sanitizeHeaderValue(subject) : `New message from ${safeName}`;
+
     const resendApiKey = process.env.RESEND_API_KEY;
 
     if (!resendApiKey) {
-      // If RESEND_API_KEY is not set yet in environment, return clean error message for user
       return NextResponse.json(
-        { error: "Resend API key is not configured in .env (RESEND_API_KEY)." },
+        { error: "Resend API key is not configured." },
         { status: 500 }
       );
     }
 
-    // Send email via Resend REST API endpoint directly
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
@@ -32,13 +62,13 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         from: "Favurr Contact <onboarding@resend.dev>",
         to: ["emekafavi2019@gmail.com"],
-        reply_to: email,
-        subject: subject || `New message from ${name}`,
+        reply_to: safeEmail,
+        subject: safeSubject,
         html: `
           <div style="font-family: sans-serif; padding: 20px; line-height: 1.6;">
-            <h2>New Inquiry from ${name}</h2>
-            <p><strong>Email:</strong> ${email}</p>
-            <p><strong>Subject:</strong> ${subject || "N/A"}</p>
+            <h2>New Inquiry from ${safeName}</h2>
+            <p><strong>Email:</strong> ${safeEmail}</p>
+            <p><strong>Subject:</strong> ${safeSubject}</p>
             <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
             <p style="white-space: pre-wrap;">${message}</p>
           </div>
@@ -55,8 +85,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Persist to database
-    await contactDal.createSubmission({ name, email, subject, message });
+    await contactDal.createSubmission({ name: safeName, email: safeEmail, subject: safeSubject, message });
 
     return NextResponse.json({ success: true, id: data.id });
   } catch (error: any) {
