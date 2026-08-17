@@ -43,8 +43,8 @@ export default async function Home() {
 
         <div className="mx-auto w-full max-w-6xl relative z-10 pb-16 md:pb-24">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
-            {/* Right Side: Content - anchored to bottom right */}
-            <div className="lg:col-span-6 lg:col-start-7 text-left">
+            {/* Left Side: Content - anchored to bottom left with wider span */}
+            <div className="lg:col-span-8 text-left">
               {/* Top badges / meta tags */}
               <div className="hero-text flex items-center gap-3 font-mono text-xs uppercase tracking-widest text-foreground mb-8">
                 <span>Fullstack & Frontend Engineer</span>
@@ -63,7 +63,7 @@ export default async function Home() {
               </h1>
 
               {/* Subtitle */}
-              <p className="hero-text font-sans mt-6 text-sm sm:text-base lg:text-lg text-foreground/90 max-w-[54ch] leading-relaxed">
+              <p className="hero-text font-sans mt-6 text-sm sm:text-base lg:text-lg text-foreground/90 max-w-[65ch] leading-relaxed">
                 I design robust backend systems and craft frictionless frontend
                 interfaces that translate complex logic into premium,
                 high-fidelity user experiences.
@@ -72,7 +72,7 @@ export default async function Home() {
           </div>
 
           {/* Static Scroll hint with bounce animation */}
-          <div className="hero-text mt-8 flex justify-end w-full max-w-6xl mx-auto">
+          <div className="hero-text mt-8 flex justify-start w-full max-w-6xl mx-auto">
             <span className="font-mono text-xs text-muted-foreground tracking-wider uppercase flex items-center gap-1 select-none animate-bounce">
               Scroll &darr;
             </span>
