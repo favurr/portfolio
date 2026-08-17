@@ -23,9 +23,9 @@ export default async function Home() {
   const experiences = await experienceDal.getVisibleExperiences();
 
   return (
-    <HomeAnimations>
+<HomeAnimations>
       {/* 1. Hero Section */}
-      <section className="relative min-h-screen md:min-h-dvh flex flex-col justify-between overflow-hidden py-16 md:py-24 px-6 sm:px-8 lg:px-12 bg-background">
+      <section className="relative min-h-screen md:min-h-dvh flex flex-col justify-end overflow-hidden py-16 md:py-24 px-6 sm:px-8 lg:px-12 bg-background">
         {/* Full-bleed high-end background video */}
         <div className="absolute inset-0 z-0 w-full h-full">
           <video
@@ -41,40 +41,42 @@ export default async function Home() {
         {/* Warm cinematic tungsten/bronze blend overlay mask */}
         <div className="absolute inset-0 z-1 w-full h-full bg-linear-to-b from-background/10 via-background/20 to-background backdrop-blur-[1px]" />
 
-        <div className="mx-auto w-full max-w-6xl my-auto grid grid-cols-1 lg:grid-cols-12 gap-12 items-center relative z-10">
-          {/* Left Side: Content */}
-          <div className="max-w-4xl absolute top-[-50] md:left-[-90] text-left lg:col-span-8">
-            {/* Top badges / meta tags */}
-            <div className="hero-text flex items-center gap-3 font-mono text-xs uppercase tracking-widest text-foreground mb-8">
-              <span>Fullstack &amp; Frontend Engineer</span>
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/30 px-2.5 py-0.5 text-[11px] normal-case tracking-normal">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-foreground font-semibold">
-                  Available for contract
+        <div className="mx-auto w-full max-w-6xl relative z-10 pb-16 md:pb-24">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
+            {/* Right Side: Content - anchored to bottom right */}
+            <div className="lg:col-span-6 lg:col-start-7 text-left">
+              {/* Top badges / meta tags */}
+              <div className="hero-text flex items-center gap-3 font-mono text-xs uppercase tracking-widest text-foreground mb-8">
+                <span>Fullstack & Frontend Engineer</span>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/30 px-2.5 py-0.5 text-[11px] normal-case tracking-normal">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-foreground font-semibold">
+                    Available for contract
+                  </span>
                 </span>
-              </span>
+              </div>
+
+              {/* Main Headline */}
+              <h1 className="hero-text font-serif text-4xl sm:text-5xl lg:text-6xl xl:text-7xl font-normal tracking-tight text-foreground leading-[1.1]">
+                Building high-performance <br className="hidden sm:block" />{" "}
+                digital <span className="italic font-normal">architectures.</span>
+              </h1>
+
+              {/* Subtitle */}
+              <p className="hero-text font-sans mt-6 text-sm sm:text-base lg:text-lg text-foreground/90 max-w-[54ch] leading-relaxed">
+                I design robust backend systems and craft frictionless frontend
+                interfaces that translate complex logic into premium,
+                high-fidelity user experiences.
+              </p>
             </div>
-
-            {/* Main Headline */}
-            <h1 className="hero-text font-serif text-5xl sm:text-7xl lg:text-8xl font-normal tracking-tight text-foreground leading-[1.1]">
-              Building high-performance <br className="hidden sm:block" />{" "}
-              digital <span className="italic font-normal">architectures.</span>
-            </h1>
-
-            {/* Subtitle */}
-            <p className="hero-text font-sans mt-8 text-base sm:text-lg text-foreground/90 max-w-[54ch] leading-relaxed">
-              I design robust backend systems and craft frictionless frontend
-              interfaces that translate complex logic into premium,
-              high-fidelity user experiences.
-            </p>
           </div>
-        </div>
 
-        {/* Static Scroll hint with bounce animation */}
-        <div className="hero-text mt-8 flex z-10 md:justify-end w-full max-w-6xl mx-auto">
-          <span className="font-mono text-xs text-muted-foreground tracking-wider uppercase flex items-center gap-1 select-none animate-bounce">
-            Scroll &darr;
-          </span>
+          {/* Static Scroll hint with bounce animation */}
+          <div className="hero-text mt-8 flex justify-end w-full max-w-6xl mx-auto">
+            <span className="font-mono text-xs text-muted-foreground tracking-wider uppercase flex items-center gap-1 select-none animate-bounce">
+              Scroll &darr;
+            </span>
+          </div>
         </div>
       </section>
 
